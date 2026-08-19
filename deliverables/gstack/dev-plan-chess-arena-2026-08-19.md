@@ -1,0 +1,162 @@
+# Chess Arena 开发计划（基于 PRD 的实现蓝图）
+
+**日期**：2026-08-19
+**场景**：全流程交付（计划 → 编码 → 自测 → 文档）
+**参与成员**：主理人（沽思航）直接实现；QA 自测由主理人收口
+**对应 PRD**：`docs/需求PRD.md`
+
+---
+
+## 📌 TL;DR
+
+- **目标**：交付一个可在本地零凭证运行的在线国际象棋对战平台，覆盖 PRD 的 **P0 全量 + P1 全量 + P2 核心项**。
+- **关键架构决策**：实时通信采用 **SSE 事件流 + 内存房间存储**（单一 Node 进程），替代 PRD 默认的 Supabase Realtime，原因是**本项目为本地练习、不部署公网、无 Supabase 凭证**； chess.js 在服务端做二次校验（完整性/去重，非防作弊，符合 PRD §8.1 的朋友间信任模型）。
+- **可运行性**：`npm install && npm run dev` 即可双人对弈；无需任何环境变量。
+- **交付范围**：P0/P1 完整；P2 实现响应式、观战、PGN 导出、昵称/头像、主题切换、音效、本地 AI（自带轻量走子引擎，非 Stockfish WASM 以避免大体积下载）；用户系统仅做昵称层，不做账号体系。
+
+---
+
+## 一、功能模块与优先级
+
+### P0（MVP，必做）
+| 模块 | 实现要点 |
+|------|---------|
+| 创建房间 | `POST /api/rooms` 生成 6 位房间号（碰撞重生成），默认执白 |
+| 加入房间 | `POST /api/rooms/[code]/join`，创建者=白、加入者=黑 |
+| 棋盘交互 | `react-chessboard` 拖拽/点击，合法走法高亮 |
+| 实时同步 | 走子方广播 `{san, fen, from, to, promotion}`，对手经 SSE 接收并 `load(fen)` |
+| 规则引擎 | `chess.js` 完整规则（将军/将死/逼和/易位/吃过路兵/升变/50步/三次重复/子力不足） |
+| 回合控制 | 非己方回合禁用操作 |
+| 对局结束 | 将死/逼和/超时/认输/和棋检测与结果展示 |
+| 走棋记录 | 代数记谱（SAN）面板，含走子序号分组 |
+
+### P1（重要增强）
+| 模块 | 实现要点 |
+|------|---------|
+| 计时器 | 可选时限 5/10/15/∞ 分钟，客户端倒计时，超时 POST `/timeout` 判负 |
+| 对局聊天 | 房间内文字聊天，SSE 推送 |
+| 悔棋请求 | 一方请求，对方同意/拒绝的状态机 |
+| 认输 | `POST /resign` |
+| 求和 | `POST /draw`（offer/accept/decline） |
+| 对局历史 | localStorage 存最近对局 + PGN；服务端保留 moves 供重连 |
+| 再来一局 | 结束后一键重开，交换先后手，game_no+1 |
+
+### P2（核心项实现）
+| 模块 | 实现要点 |
+|------|---------|
+| 昵称/头像 | 进房填昵称，可选 emoji 头像 |
+| 主题切换 | 棋盘配色方案（经典/蓝/绿/灰） |
+| 音效 | 落子/将军/结束 Web Audio 提示音 |
+| 响应式 | Tailwind 移动端适配（棋盘缩放、面板折叠） |
+| 观战 | `/room/[code]/spectate` 只读订阅 SSE |
+| PGN 导出 | 生成并下载标准 PGN |
+| 本地 AI | 自带 minimax 轻量引擎（离线、无大体积依赖）支持人机对战 |
+
+> 说明：P2 的 Stockfish WASM 因需下载约 10MB+ 引擎文件且本地练习无需，改用内置轻量走子引擎（可后续替换为 Stockfish），PRD 意图（人机对战）已满足。
+
+---
+
+## 二、技术选型（落地版）
+
+| 层级 | 技术 | 说明 |
+|------|------|------|
+| 框架 | Next.js 14 (App Router) + React 18 | 与 PRD 一致 |
+| UI | Tailwind CSS + 自研轻量组件 | 不引入 shadcn 脚手架，降低依赖与体积；保留 `components/ui` 结构 |
+| 棋盘 | react-chessboard ^4.7 | 与 PRD 一致 |
+| 棋规 | chess.js ^1.0 | 与 PRD 一致 |
+| 实时 | **SSE 事件流 + 内存存储** | 替代 Supabase，零凭证本地可跑 |
+| 状态 | Zustand ^4.5 | 与 PRD 一致 |
+| 工具 | nanoid（房间号）、lucide-react（图标） | 与 PRD 一致 |
+| 测试 | Node 内置 `node:test` | 规则引擎边界单测，无需额外框架 |
+| 部署 | Vercel（本地无需） | 提供 Supabase 切换说明 |
+
+---
+
+## 三、项目结构（落地版）
+
+```
+chess-arena/
+├── app/
+│   ├── layout.tsx                # 根布局
+│   ├── globals.css               # Tailwind + 主题变量
+│   ├── page.tsx                  # 首页（创建/加入/时限/昵称）
+│   ├── room/[code]/page.tsx      # 对局房间（核心）
+│   ├── room/[code]/spectate/page.tsx  # 观战（只读）
+│   ├── history/page.tsx          # 对局历史
+│   └── api/
+│       ├── rooms/route.ts                    # POST 创建
+│       ├── rooms/[code]/route.ts             # GET 房间状态
+│       ├── rooms/[code]/join/route.ts        # POST 加入
+│       ├── rooms/[code]/move/route.ts        # POST 走棋（服务端校验）
+│       ├── rooms/[code]/chat/route.ts        # POST 聊天
+│       ├── rooms/[code]/resign/route.ts      # POST 认输
+│       ├── rooms/[code]/draw/route.ts        # POST 求和（offer/accept/decline）
+│       ├── rooms/[code]/takeback/route.ts    # POST 悔棋（request/accept/decline）
+│       ├── rooms/[code]/rematch/route.ts     # POST 再来一局
+│       ├── rooms/[code]/timeout/route.ts     # POST 超时判负
+│       └── rooms/[code]/stream/route.ts      # GET SSE 事件流
+├── components/
+│   ├── chess/{ChessBoard,MoveHistory,GameControls,PlayerInfo,PromotionDialog,Timer}.tsx
+│   ├── room/{CreateRoom,JoinRoom,WaitingRoom,ChatPanel,GameResultModal}.tsx
+│   └── ui/{Button,Card,Diff}.tsx
+├── lib/
+│   ├── chess-engine.ts           # chess.js 封装（走子/校验/结束判定/PGN）
+│   ├── store.ts                  # 内存房间存储（单例）
+│   ├── realtime.ts               # SSE 广播管理
+│   ├── events.ts                 # 事件类型与构造
+│   └── utils.ts
+├── hooks/
+│   ├── useChessGame.ts           # 游戏状态 + SSE 订阅
+│   ├── useRoom.ts                # 房间状态
+│   └── useSound.ts               # 音效
+├── stores/game-store.ts          # Zustand
+├── types/index.ts                # 共享类型
+├── __tests__/chess-engine.test.ts# 规则引擎单测
+├── package.json / tsconfig.json / next.config.mjs / tailwind.config.ts / postcss.config.mjs
+├── README.md                     # 运行/部署/Supabase 切换
+└── supabase/schema.sql           # PRD 数据模型（备用）
+```
+
+---
+
+## 四、任务拆分与时间排期（单人实现，含自测）
+
+| 阶段 | 任务 | 产出 | 排期 |
+|------|------|------|------|
+| M0 | 脚手架 + 配置 + 类型 | 可 `next dev` 空壳 | Day 1 |
+| M1 | 棋规引擎 + 单测 | `chess-engine.ts` + 测试通过 | Day 1-2 |
+| M2 | 内存存储 + SSE 实时骨架 | `store.ts`/`realtime.ts`/`events.ts` | Day 2 |
+| M3 | API 路由（房间/加入/走棋/事件流） | 后端可跑通 | Day 2-3 |
+| M4 | 首页 + 对局页（棋盘/记谱/回合） | P0 可双人对弈 | Day 3-4 |
+| M5 | 对局结束 + 认输/求和/悔棋/重赛 | P1 核心 | Day 4-5 |
+| M6 | 计时器 + 聊天 + 历史 + PGN | P1 完整 | Day 5-6 |
+| M7 | P2：观战/主题/音效/昵称/响应式/本地AI | P2 核心 | Day 6-8 |
+| M8 | 自测（typecheck/build/单测）+ 文档 | 验收通过 | Day 8-9 |
+
+> 注：PRD 原 11 天里程碑偏乐观（评审报告亦指出）。本计划按"本地可运行 + 完整 P0/P1 + P2 核心"实际拆分，单人约 8-9 个工作日当量，本次会话一次性产出全部代码并自测。
+
+---
+
+## 五、关键实现决策（来自评审的澄清与修正）
+
+1. **信任模型**：沿用 PRD §8.1 朋友间信任、客户端权威；服务端 chess.js 校验仅用于**拒绝非法/重复走子**与**防状态错乱**，不做反作弊。
+2. **颜色分配**：创建者=白（先手），链接加入者=黑（后手）（PRD §7.1.1）。
+3. **和棋条件**：将死 + 逼和 + 50 步 + 三次重复 + 子力不足，全部用 chess.js 判定（PRD §8.1.2）。
+4. **升变交互**：兵到底线弹窗选 后/车/象/马，默认推荐后（PRD §8.1.1）。
+5. **状态真相源**：每次走棋携带完整 FEN，对手以 FEN 为准 `load`，避免漂移（PRD §十三 风险应对）。
+6. **断线重连**：重进房间 GET 最新 FEN/moves，恢复棋盘并重订阅 SSE（PRD §8.2）。
+7. **实时方案替代**：SSE 替代 Supabase；保留 `supabase/schema.sql` 与 README 切换说明，接 Supabase 时仅需替换 `store.ts`/`realtime.ts` 适配层。
+
+---
+
+## 六、自测与验收清单
+
+- [x] `npm run typecheck` 无类型错误
+- [x] `npm run test` 规则引擎单测通过（升变/易位/吃过路兵/逼和/子力不足/三次重复/50步）
+- [x] `npm run build` 构建通过
+- [x] 手动验收：创建→分享→加入→走子实时同步→将死结束→再来一局
+- [x] 与 PRD 功能对照表逐条核对（见 README 验收清单）
+
+---
+
+> 本报告由软件工坊 AI 协作生成，关键决策请由工程负责人复核。
