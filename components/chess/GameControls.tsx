@@ -17,6 +17,7 @@ function downloadPgn(pgn: string, code: string) {
 
 export function GameControls() {
   const myColor = useGameStore((s) => s.myColor);
+  const mode = useGameStore((s) => s.mode);
   const status = useGameStore((s) => s.status);
   const gameOver = useGameStore((s) => s.gameOver);
   const drawOfferBy = useGameStore((s) => s.drawOfferBy);
@@ -67,7 +68,12 @@ export function GameControls() {
         <Button variant="secondary" disabled={!playing} onClick={() => offerDraw()}>
           <Handshake size={16} /> 求和
         </Button>
-        <Button variant="secondary" disabled={!playing} onClick={() => requestTakeback()}>
+        <Button
+          variant="secondary"
+          disabled={!playing || mode === "friend"}
+          onClick={() => requestTakeback()}
+          title={mode === "friend" ? "好友对战不支持悔棋" : undefined}
+        >
           <Undo2 size={16} /> 悔棋
         </Button>
         <Button variant="ghost" onClick={handleExport}>
@@ -92,7 +98,7 @@ export function GameControls() {
         <p className="text-center text-xs text-muted">已发送和棋请求，等待对方回应…</p>
       )}
 
-      {takebackBy && opponent && takebackBy === opponent && (
+      {takebackBy && opponent && takebackBy === opponent && mode !== "friend" && (
         <div className="rounded-lg border border-accent/60 bg-surface-2 p-2 text-sm">
           <p className="mb-2 text-muted">对方请求悔棋</p>
           <div className="flex gap-2">
@@ -105,7 +111,7 @@ export function GameControls() {
           </div>
         </div>
       )}
-      {takebackBy && myColor && takebackBy === myColor && (
+      {takebackBy && myColor && takebackBy === myColor && mode !== "friend" && (
         <p className="text-center text-xs text-muted">已发送悔棋请求，等待对方回应…</p>
       )}
     </div>

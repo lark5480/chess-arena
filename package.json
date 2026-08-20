@@ -5,6 +5,7 @@
   "description": "轻量级在线国际象棋对战平台（Next.js 14 + chess.js + SSE 实时同步）",
   "scripts": {
     "dev": "next dev",
+    "dev:lan": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

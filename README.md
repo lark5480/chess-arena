@@ -124,6 +124,23 @@ chess-arena/
 6. 将死对方获胜，或对方认输/超时获胜
 7. 对局结束后可「再来一局」交换先后手
 
+## 局域网联机（与同事同网对战）
+
+默认 `npm run dev` 仅本机可访问（绑定 127.0.0.1）。要让同一局域网内的同事连进来，用：
+
+```bash
+npm run dev:lan
+# 等价于 next dev -H 0.0.0.0 -p 3000，监听所有网卡
+```
+
+- 本机打开 http://localhost:3000 创建房间
+- 把地址栏完整链接（如 `http://192.168.x.x:3000/room/XXXXXX`）发给同事，对方打开即进同一房间
+- 若同事打不开页面：多半是 Windows 防火墙拦了 3000 端口，以管理员身份放行一次
+  ```bash
+  netsh advfirewall firewall add rule name="ChessArena3000" dir=in action=allow protocol=TCP localport=3000
+  ```
+- 房间状态存在内存中，服务重启即清空，试玩中途请勿重启
+
 ## 部署
 
 详见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)

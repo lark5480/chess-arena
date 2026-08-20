@@ -126,7 +126,7 @@ export function getRoom(code: string): RoomState | undefined {
 export function joinRoom(
   code: string,
   opts: { name?: string; avatar?: string }
-): { playerId: string; color: Color; room: RoomState } {
+): { code: string; playerId: string; color: Color; room: RoomState } {
   const room = rooms.get(code.toUpperCase());
   if (!room) throw new RoomError("房间不存在", 404);
   if (room.status !== "waiting") throw new RoomError("对局已开始或已结束", 409);
@@ -165,14 +165,14 @@ export function joinRoom(
     white,
     black,
   });
-  return { playerId, color: "black", room: roomState };
+  return { code: room.code, playerId, color: "black", room: roomState };
 }
 
 // ============ 人机对战：加入 AI 机器人 ============
 export function joinAIRoom(
   code: string,
   opts: { name?: string } = {}
-): { playerId: string; color: Color; room: RoomState } {
+): { code: string; playerId: string; color: Color; room: RoomState } {
   const room = rooms.get(code.toUpperCase());
   if (!room) throw new RoomError("房间不存在", 404);
   if (room.status !== "waiting") throw new RoomError("对局已开始或已结束", 409);
@@ -211,7 +211,7 @@ export function joinAIRoom(
     white,
     black,
   });
-  return { playerId: aiId, color: "black", room: roomState };
+  return { code: room.code, playerId: aiId, color: "black", room: roomState };
 }
 
 // ============ 走棋 ============

@@ -5,6 +5,34 @@ import { Button } from "@/components/ui/Button";
 import { Copy, Check } from "lucide-react";
 import { useState } from "react";
 
+// 复制文本：优先用现代 Clipboard API（localhost / https 安全上下文），
+// 局域网 http://IP 下 navigator.clipboard 不可用，退回 execCommand 兜底。
+async function copyText(text: string): Promise<boolean> {
+  if (typeof navigator !== "undefined" && navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* 落到兜底 */
+    }
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.top = "-9999px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 export function WaitingRoom() {
   const code = useGameStore((s) => s.code);
   const [copied, setCopied] = useState(false);
@@ -13,12 +41,10 @@ export function WaitingRoom() {
     typeof window !== "undefined" ? `${window.location.origin}/room/${code}` : `/room/${code}`;
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(link);
+    const ok = await copyText(link);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* ignore */
     }
   };
 
