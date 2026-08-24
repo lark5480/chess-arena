@@ -15,6 +15,7 @@ import type {
   RoomEvent,
   RoomStatus,
   TimeLimit,
+  Clocks,
 } from "@/types";
 
 export interface BoardTheme {
@@ -38,6 +39,7 @@ interface LobbyInfo {
   myName: string;
   mode: "friend" | "ai";
   aiPlayerId?: string;
+  aiDifficulty?: number;
 }
 
 interface GameStore {
@@ -48,6 +50,7 @@ interface GameStore {
   myName: string;
   mode: "friend" | "ai";
   aiPlayerId: string | null;
+  aiDifficulty: number;
 
   // 房间状态
   status: RoomStatus;
@@ -57,6 +60,8 @@ interface GameStore {
   black: Player | null;
   fen: string;
   turn: Color;
+  clocks: Clocks | null;
+  clockUpdatedAt: number;
   gameOver: boolean;
   result?: GameResult;
   moves: MoveRecord[];
@@ -72,6 +77,9 @@ interface GameStore {
   soundEnabled: boolean;
   theme: BoardTheme;
   error: string | null;
+  viewIndex: number | null;
+  setViewIndex: (i: number | null) => void;
+  goToLive: () => void;
   toast: string | null;
 
   // actions
@@ -109,6 +117,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   myName: "",
   mode: "friend",
   aiPlayerId: null,
+  aiDifficulty: 2,
 
   status: "waiting",
   timeLimit: 600,
@@ -117,6 +126,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   black: null,
   fen: INITIAL_FEN,
   turn: "white",
+  clocks: null,
+  clockUpdatedAt: 0,
   gameOver: false,
   result: undefined,
   moves: [],
@@ -131,6 +142,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   soundEnabled: true,
   theme: BOARD_THEMES[0],
   error: null,
+  viewIndex: null,
   toast: null,
 
   setLobby: (info) =>
@@ -141,6 +153,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       myName: info.myName,
       mode: info.mode,
       aiPlayerId: info.aiPlayerId ?? null,
+      aiDifficulty: info.aiDifficulty ?? 2,
     }),
 
   handleEvent: (e) => {
@@ -153,6 +166,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
           status: "playing",
           fen: e.fen,
           turn: e.turn,
+          clocks: { white: e.timeLimit * 1000, black: e.timeLimit * 1000 },
+          clockUpdatedAt: Date.now(),
           timeLimit: e.timeLimit,
           white: e.white,
           black: e.black,
@@ -182,6 +197,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           selectedSquare: null,
           legalTargets: [],
           pendingPromotion: null,
+          clockUpdatedAt: Date.now(),
         });
         break;
       }
@@ -218,6 +234,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
           gameNo: e.gameNo,
           fen: e.fen,
           turn: e.turn,
+          clocks: { white: e.timeLimit * 1000, black: e.timeLimit * 1000 },
+          clockUpdatedAt: Date.now(),
           timeLimit: e.timeLimit,
           white: e.white,
           black: e.black,
@@ -248,6 +266,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setSoundEnabled: (v) => set({ soundEnabled: v }),
   setTheme: (t) => set({ theme: t }),
   setToast: (t) => set({ toast: t }),
+  setViewIndex: (i) => set({ viewIndex: i }),
+  goToLive: () => set({ viewIndex: null, selectedSquare: null, legalTargets: [] }),
 
   move: async (from, to, promotion) => {
     const st = get();
@@ -409,6 +429,8 @@ function applyRoom(
     myColor: me ? me.color : st.myColor,
     fen: room.currentFen,
     turn: room.turn,
+    clocks: room.clocks ?? null,
+    clockUpdatedAt: room.clockUpdatedAt ?? 0,
     gameOver: room.gameOver,
     result: room.result,
     moves: room.moves,
@@ -485,7 +507,7 @@ export function triggerAIMoveIfNeeded(): void {
   const code = st.code;
   // 模拟思考延迟，体验更自然
   setTimeout(async () => {
-    const move = chooseAIMove(fen, 2);
+    const move = chooseAIMove(fen, st.aiDifficulty);
     if (!move) return;
     try {
       await fetch(`/api/rooms/${code}/move`, {

@@ -15,6 +15,7 @@ export function CreateRoom() {
   const [name, setName] = useState("");
   const [timeLimit, setTimeLimit] = useState<TimeLimit>(600);
   const [mode, setMode] = useState<"friend" | "ai">("friend");
+  const [difficulty, setDifficulty] = useState(2);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,6 +48,7 @@ export function CreateRoom() {
           myName,
           mode: "ai",
           aiPlayerId: aiData.playerId,
+          aiDifficulty: difficulty,
         };
         writeLobby(lobby);
         setLobby(lobby);
@@ -103,6 +105,41 @@ export function CreateRoom() {
           </button>
         </div>
       </div>
+
+      {mode === "ai" && (
+        <div>
+          <label className="mb-1 block text-xs text-muted">AI 难度</label>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => setDifficulty(1)}
+              className={`rounded-lg border px-2 py-2 text-sm ${
+                difficulty === 1 ? "border-accent bg-surface-2" : "border-border"
+              }`}
+            >
+              简单
+            </button>
+            <button
+              type="button"
+              onClick={() => setDifficulty(2)}
+              className={`rounded-lg border px-2 py-2 text-sm ${
+                difficulty === 2 ? "border-accent bg-surface-2" : "border-border"
+              }`}
+            >
+              中等
+            </button>
+            <button
+              type="button"
+              onClick={() => setDifficulty(3)}
+              className={`rounded-lg border px-2 py-2 text-sm ${
+                difficulty === 3 ? "border-accent bg-surface-2" : "border-border"
+              }`}
+            >
+              困难
+            </button>
+          </div>
+        </div>
+      )}
 
       <div>
         <label className="mb-1 block text-xs text-muted">时限</label>

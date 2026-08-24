@@ -63,6 +63,12 @@ export interface DrawOffer {
   pending: boolean;
 }
 
+/** 每方剩余毫秒数（服务端权威值） */
+export interface Clocks {
+  white: number;
+  black: number;
+}
+
 // ===== 房间全量状态（SSE 重连快照 / GET 返回） =====
 export interface RoomState {
   code: string;
@@ -73,6 +79,8 @@ export interface RoomState {
   gameNo: number;
   currentFen: string;
   turn: Color;
+  clocks?: Clocks;
+  clockUpdatedAt?: number;
   players: Player[];
   moves: MoveRecord[];
   chat: ChatMessage[];
@@ -149,4 +157,5 @@ export interface LobbyInfo {
   myName: string;
   mode: "friend" | "ai";
   aiPlayerId?: string;
+  aiDifficulty?: number;
 }

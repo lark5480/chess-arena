@@ -16,13 +16,15 @@ import type {
   Player,
   RoomState,
   TimeLimit,
+  Clocks,
 } from "@/types";
-
 const genCode = customAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 6); // 去掉易混淆字符
 const genId = customAlphabet("abcdefghijklmnopqrstuvwxyz0123456789", 12);
 
 interface Room extends RoomState {
   // 内部运行时字段
+  clocks: Clocks;
+  clockUpdatedAt: number;
   chess?: ReturnType<typeof createGame>;
 }
 
@@ -58,6 +60,8 @@ function snapshot(room: Room): RoomState {
     gameNo: room.gameNo,
     currentFen: room.currentFen,
     turn: room.turn,
+    clocks: room.clocks ? { ...room.clocks } : undefined,
+    clockUpdatedAt: room.clockUpdatedAt,
     players: room.players.map((p) => ({ ...p })),
     moves: room.moves.map((m) => ({ ...m })),
     chat: room.chat.map((c) => ({ ...c })),
@@ -112,6 +116,8 @@ export function createRoom(opts: {
     moves: [],
     chat: [],
     gameOver: false,
+    clocks: { white: (opts.timeLimit ?? 600) * 1000, black: (opts.timeLimit ?? 600) * 1000 },
+    clockUpdatedAt: now(),
   };
   rooms.set(code, room);
   systemChat(room, `${white.name} 创建了房间`);
@@ -152,6 +158,8 @@ export function joinRoom(
   room.result = undefined;
   room.finishedAt = undefined;
   room.chess = createGame(START_FEN);
+  room.clocks = { white: room.timeLimit * 1000, black: room.timeLimit * 1000 };
+  room.clockUpdatedAt = now();
 
   const white = playerByColor(room, "white")!;
   systemChat(room, `${black.name} 加入了房间，对局开始！`);
@@ -198,6 +206,8 @@ export function joinAIRoom(
   room.result = undefined;
   room.finishedAt = undefined;
   room.chess = createGame(START_FEN);
+  room.clocks = { white: room.timeLimit * 1000, black: room.timeLimit * 1000 };
+  room.clockUpdatedAt = now();
 
   const white = playerByColor(room, "white")!;
   systemChat(room, "🤖 电脑已就位，对局开始！");
@@ -257,6 +267,9 @@ export function applyMoveAction(
   };
   room.moves.push(move);
   room.currentFen = res.fen;
+  const elapsed = now() - room.clockUpdatedAt;
+  room.clocks[player.color] = Math.max(0, room.clocks[player.color] - elapsed);
+  room.clockUpdatedAt = now();
 
   const end = evaluateGameEnd(chess);
   let result: GameResult | undefined;
@@ -458,6 +471,10 @@ export function timeoutAction(code: string, playerId: string) {
   const player = findPlayer(room, playerId);
   if (!player) return { ok: false, error: "玩家不存在" };
 
+  const elapsed = now() - room.clockUpdatedAt;
+  const remaining = Math.max(0, room.clocks[player.color] - elapsed);
+  if (remaining > 0) return { ok: false, error: "尚未超时" };
+
   const result: GameResult = {
     gameNo: room.gameNo,
     winner: invertColor(player.color),
@@ -498,6 +515,8 @@ export function rematchAction(code: string, playerId: string) {
   room.takeback = undefined;
   room.draw = undefined;
   room.chess = createGame(START_FEN);
+  room.clocks = { white: room.timeLimit * 1000, black: room.timeLimit * 1000 };
+  room.clockUpdatedAt = now();
   room.chat = [];
   systemChat(room, "新一局开始，已交换先后手！");
 
