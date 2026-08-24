@@ -22,15 +22,20 @@ export function ChessBoard() {
   const clearSelection = useGameStore((s) => s.clearSelection);
   const move = useGameStore((s) => s.move);
   const theme = useGameStore((s) => s.theme);
+  const viewIndex = useGameStore((s) => s.viewIndex);
 
   const { play } = useSound();
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(560);
+  const [flipped, setFlipped] = useState(false);
 
-  const interactive = !!myColor && !gameOver && turn === myColor;
+  const isReviewing = viewIndex !== null && viewIndex < moves.length;
+  const displayFen = isReviewing && viewIndex !== null ? moves[viewIndex].fen : fen;
+  const interactive = !!myColor && !gameOver && turn === myColor && !isReviewing;
+  const effectiveFen = isReviewing ? displayFen : fen;
 
   const kingInCheckSquare = useMemo(() => {
-    const chess = createGame(fen);
+    const chess = createGame(effectiveFen);
     if (!chess.inCheck()) return null;
     const kingColor = chess.turn();
     const board = chess.board();
@@ -147,14 +152,22 @@ export function ChessBoard() {
 
   return (
     <div ref={wrapRef} className="chess-board-root w-full">
+      <button
+        onClick={() => setFlipped((f) => !f)}
+        className="absolute right-2 top-2 z-10 rounded-md border border-border bg-surface/80 px-2 py-1 text-xs text-muted hover:text-gray-200 hover:border-accent transition-colors"
+        title="翻转棋盘"
+      >
+        ⇅
+      </button>
       <Chessboard
-        position={fen}
+        position={effectiveFen}
         boardWidth={width}
-        boardOrientation={myColor === "black" ? "black" : "white"}
+        boardOrientation={flipped ? (myColor === "black" ? "white" : "black") : (myColor === "black" ? "black" : "white")}
         onPieceDrop={onPieceDrop}
         onSquareClick={onSquareClick}
         arePiecesDraggable={interactive}
         animationDuration={200}
+        showBoardNotation={true}
         customSquareStyles={customSquareStyles}
         customDarkSquareStyle={{ backgroundColor: theme.dark }}
         customLightSquareStyle={{ backgroundColor: theme.light }}

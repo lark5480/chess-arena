@@ -305,29 +305,25 @@ async function reconnectToRoom(roomCode: string) {
 }
 ```
 
-### 8.3 计时器实现
+### 8.3 计时器实现（已升级为服务端权威计时）
+
+服务端在 `RoomState` 中维护 `clocks`（每方剩余毫秒）与 `clockUpdatedAt` 时间戳。
+走子成功后从当前方时钟扣除实际耗时；超时请求由服务端校验剩余时间后才判负。
+
+客户端 `Timer.tsx` 仅做展示级倒计时，刷新页面后从 SSE 快照恢复真实剩余时间。
 
 ```typescript
-// 客户端倒计时（朋友间玩够用，超时由本端判断；非防作弊 / 防篡改设计）
-function useChessTimer(initialSeconds: number, isActive: boolean) {
-  const [timeLeft, setTimeLeft] = useState(initialSeconds);
-  
-  useEffect(() => {
-    if (!isActive) return;
-    const interval = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 0) {
-          handleTimeout(); // 超时判负
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isActive]);
-  
-  return timeLeft;
+// types/index.ts
+export interface Clocks { white: number; black: number }
+export interface RoomState {
+  clocks?: Clocks;
+  clockUpdatedAt?: number;
 }
+
+// lib/store.ts — 走子时扣减耗时
+const elapsed = now() - room.clockUpdatedAt;
+room.clocks[player.color] = Math.max(0, room.clocks[player.color] - elapsed);
+room.clockUpdatedAt = now();
 ```
 
 ---

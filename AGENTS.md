@@ -14,6 +14,8 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 - **客户端状态**：`stores/game-store.ts` 是 Zustand store，包含 fen/turn/players/moves/chat/gameOver 等全部对局状态，以及 `myColor`（当前用户执子方）。
 - **AI 走子触发**：客户端 `triggerAIMoveIfNeeded()` 动态识别 AI 颜色（`st.white?.isAI ? st.white : st.black?.isAI ? st.black : null`），不能假设 AI 恒执黑。通过 fetch 请求 `/api/rooms/[code]/move` 走子。
 - **走棋权威**：服务端用 chess.js 重放校验，返回权威 FEN。客户端也有 chess.js 做预校验（高亮合法走法），但最终以服务端为准。
+- **服务端权威计时**：`RoomState` 含 `clocks`（每方剩余毫秒）与 `clockUpdatedAt`。走子时服务端扣减耗时，超时由 `timeoutAction()` 校验剩余时间后才判负，客户端仅做展示倒计时。
+- **棋谱回看**：客户端 `game-store.ts` 的 `viewIndex` 控制回看步数；`ChessBoard.tsx` 在回看模式用历史 FEN 渲染并禁交互，`MoveHistory.tsx` 提供点击/键盘导航。
 
 ## API 路由清单
 
@@ -39,6 +41,8 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 - `RoomEvent`：SSE 事件联合类型（state/move/chat/resign/draw_*/takeback_*/rematch/timeout/opponent_left/game_start）
 - `Player`：含 `isAI` 标记区分人类与 AI
 - `Color = "white" | "black"`
+- `Clocks`：每方剩余毫秒数（服务端权威值），随 `RoomState.clocks` 下发
+- `LobbyInfo.aiDifficulty`：AI 搜索深度（1=简单 / 2=中等 / 3=困难），存 sessionStorage 刷新后恢复
 
 ## 编码约定
 
@@ -70,7 +74,7 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 4. 合法走法：`legalTargetSquares(fen, square)`
 
 ### 修改 AI
-- `lib/ai-engine.ts`：minimax + alpha-beta 剪枝，默认 depth=2
+- `lib/ai-engine.ts`：minimax + alpha-beta 剪枝，难度可选 depth 1/2/3（简单/中等/困难），由 `LobbyInfo.aiDifficulty` 传入 `chooseAIMove()`
 - AI 走子由客户端触发：`stores/game-store.ts` 的 `triggerAIMoveIfNeeded()`
 - AI 走子请求发到 `/api/rooms/[code]/move`，与人类走子共用同一 API
 
