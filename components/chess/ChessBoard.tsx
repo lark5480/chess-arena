@@ -48,7 +48,7 @@ export function ChessBoard() {
       }
     }
     return null;
-  }, [fen]);
+  }, [effectiveFen]);
 
   useEffect(() => {
     const el = wrapRef.current;

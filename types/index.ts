@@ -95,18 +95,17 @@ export type RoomEvent =
   | { type: "state"; room: RoomState }
   | { type: "player_joined"; player: Player; room: RoomState }
   | { type: "game_start"; fen: string; turn: Color; timeLimit: TimeLimit; white: Player; black: Player }
-  | { type: "move"; move: MoveRecord; fen: string; turn: Color; gameOver: boolean; result?: GameResult }
+  | { type: "move"; move: MoveRecord; fen: string; turn: Color; gameOver: boolean; result?: GameResult; clocks?: Clocks }
   | { type: "chat"; message: ChatMessage }
   | { type: "resign"; by: Color; result: GameResult }
   | { type: "draw_offer"; by: Color }
   | { type: "draw_accepted"; result: GameResult }
   | { type: "draw_declined"; by: Color }
   | { type: "takeback_request"; by: Color }
-  | { type: "takeback_accepted"; fen: string; moves: MoveRecord[]; turn: Color }
+  | { type: "takeback_accepted"; fen: string; moves: MoveRecord[]; turn: Color; clocks?: Clocks }
   | { type: "takeback_declined"; by: Color }
   | { type: "timeout"; by: Color; result: GameResult }
-  | { type: "rematch"; gameNo: number; fen: string; turn: Color; timeLimit: TimeLimit; white: Player; black: Player }
-  | { type: "opponent_left"; color: Color };
+  | { type: "rematch"; gameNo: number; fen: string; turn: Color; timeLimit: TimeLimit; white: Player; black: Player };
 
 // ===== API 请求/响应 =====
 export interface CreateRoomRequest {

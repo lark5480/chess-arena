@@ -9,7 +9,7 @@
 服务端状态：内存存储（globalThis Map），无外部数据库依赖
 实时通信：SSE (Server-Sent Events)，非 WebSocket
 棋规引擎：chess.js（服务端权威校验 + 客户端预校验）
-AI 对战：minimax + alpha-beta 剪枝（depth=2，服务端计算）
+AI 对战：minimax + alpha-beta 剪枝（depth 1/2/3 可选，浏览器 Web Worker 中计算）
 ```
 
 **关键点**：项目当前使用**纯内存存储**，不依赖 Supabase / 数据库。部署到 Vercel 即可运行，无需配置外部服务。

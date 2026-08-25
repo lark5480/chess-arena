@@ -7,7 +7,8 @@ import {
   mapTurn,
   START_FEN,
 } from "./chess-engine";
-import { broadcast } from "./realtime";
+import { broadcast, closeSubscribers } from "./realtime";
+import { pruneRateLimit } from "./rate-limit";
 import type {
   ChatMessage,
   Color,
@@ -86,12 +87,46 @@ function playerByColor(room: Room, color: Color): Player | undefined {
   return room.players.find((p) => p.color === color);
 }
 
+// ============ 过期清扫 ============
+const FINISHED_ROOM_TTL = 30 * 60 * 1000; // 结束后保留 30 分钟（供回看）
+const IDLE_ROOM_TTL = 3 * 60 * 60 * 1000; // 无活动 3 小时后清理
+
+/** 房间最后一次活动时间：取创建/最后走子/最后聊天的最大值 */
+function lastActivityAt(room: Room): number {
+  let t = room.createdAt;
+  const lastMove = room.moves[room.moves.length - 1];
+  if (lastMove && lastMove.playedAt > t) t = lastMove.playedAt;
+  const lastChat = room.chat[room.chat.length - 1];
+  if (lastChat && lastChat.at > t) t = lastChat.at;
+  return t;
+}
+
+/**
+ * 删除过期房间并断开其 SSE 订阅，防止内存无限增长。
+ * 在 createRoom 时触发：内存只随创建增长，按创建节奏清扫即可兜底。
+ */
+export function sweepExpiredRooms(): void {
+  const nowTs = now();
+  for (const [code, room] of rooms) {
+    const base =
+      room.status === "finished" ? room.finishedAt ?? lastActivityAt(room) : lastActivityAt(room);
+    const ttl = room.status === "finished" ? FINISHED_ROOM_TTL : IDLE_ROOM_TTL;
+    if (nowTs - base > ttl) {
+      rooms.delete(code);
+      closeSubscribers(code);
+    }
+  }
+  pruneRateLimit(60_000);
+}
+
 // ============ 创建 / 加入 ============
 export function createRoom(opts: {
   name?: string;
   timeLimit?: TimeLimit;
   avatar?: string;
 }): { code: string; playerId: string; color: Color } {
+  sweepExpiredRooms();
+
   let code = genCode();
   while (rooms.has(code)) code = genCode();
 
@@ -296,6 +331,7 @@ export function applyMoveAction(
     turn: room.turn,
     gameOver: room.gameOver,
     result,
+    clocks: { ...room.clocks },
   });
   if (result) {
     systemChat(room, resultMessage(result));
@@ -454,6 +490,7 @@ export function takebackRespondAction(
       fen: room.currentFen,
       moves,
       turn: room.turn,
+      clocks: { ...room.clocks },
     });
     return { ok: true };
   } else {
@@ -464,20 +501,36 @@ export function takebackRespondAction(
 }
 
 // ============ 超时 ============
-export function timeoutAction(code: string, playerId: string) {
+/** 容差：抵消客户端倒计时与网络延迟的误差 */
+const TIMEOUT_TOLERANCE_MS = 200;
+
+/**
+ * 上报超时。任一在场玩家可上报任一方的超时（对方关页也能按钟获胜），
+ * 服务端用权威时钟复核：仅当被判方时钟确实耗尽才生效。
+ */
+export function timeoutAction(code: string, playerId: string, target?: Color) {
   const room = rooms.get(code.toUpperCase());
   if (!room || room.status !== "playing" || room.gameOver)
     return { ok: false, error: "当前不可判超时" };
-  const player = findPlayer(room, playerId);
-  if (!player) return { ok: false, error: "玩家不存在" };
+  const reporter = findPlayer(room, playerId);
+  if (!reporter) return { ok: false, error: "玩家不存在" };
+  if (room.timeLimit === 0) return { ok: false, error: "本局不限时" };
 
+  const loserColor = target ?? reporter.color;
+  const loser = playerByColor(room, loserColor);
+  if (!loser) return { ok: false, error: "玩家不存在" };
+
+  // 轮到被判方时时钟在走，需扣减自上次扣时以来的耗时
   const elapsed = now() - room.clockUpdatedAt;
-  const remaining = Math.max(0, room.clocks[player.color] - elapsed);
-  if (remaining > 0) return { ok: false, error: "尚未超时" };
+  const remaining =
+    room.turn === loserColor
+      ? Math.max(0, room.clocks[loserColor] - elapsed)
+      : room.clocks[loserColor];
+  if (remaining > TIMEOUT_TOLERANCE_MS) return { ok: false, error: "尚未超时" };
 
   const result: GameResult = {
     gameNo: room.gameNo,
-    winner: invertColor(player.color),
+    winner: invertColor(loserColor),
     reason: "timeout",
     endedAt: now(),
   };
@@ -486,7 +539,7 @@ export function timeoutAction(code: string, playerId: string) {
   room.finishedAt = now();
   room.result = result;
   systemChat(room, resultMessage(result));
-  broadcast(room.code, { type: "timeout", by: player.color, result });
+  broadcast(room.code, { type: "timeout", by: loserColor, result });
   return { ok: true, result };
 }
 
@@ -534,16 +587,60 @@ export function rematchAction(code: string, playerId: string) {
   return { ok: true };
 }
 
-// ============ 断线状态 ============
+// ============ 在线状态 ============
+const globalForPresence = globalThis as unknown as {
+  __chessArenaPresenceTimers?: Map<string, ReturnType<typeof setTimeout>>;
+};
+const presenceTimers: Map<string, ReturnType<typeof setTimeout>> =
+  globalForPresence.__chessArenaPresenceTimers ?? new Map();
+if (!globalForPresence.__chessArenaPresenceTimers) {
+  globalForPresence.__chessArenaPresenceTimers = presenceTimers;
+}
+
+/** SSE 短暂断开（如 Serverless 函数超时后重连）的离线宽限期 */
+const DISCONNECT_GRACE_MS = 10_000;
+
+function broadcastPresence(room: Room) {
+  broadcast(room.code, { type: "state", room: snapshot(room) });
+}
+
+/**
+ * 标记玩家在线/离线（由 SSE 连接/断开驱动）。
+ * 离线有宽限期，期间重连则取消；状态变化时广播全量快照。
+ */
 export function setConnected(code: string, playerId: string, connected: boolean) {
   const room = rooms.get(code.toUpperCase());
   if (!room) return;
   const player = findPlayer(room, playerId);
-  if (!player) return;
-  player.connected = connected;
-  if (!connected) {
-    broadcast(room.code, { type: "opponent_left", color: player.color });
+  if (!player || player.isAI) return;
+  const key = `${room.code}:${playerId}`;
+
+  if (connected) {
+    const timer = presenceTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      presenceTimers.delete(key);
+    }
+    if (!player.connected) {
+      player.connected = true;
+      broadcastPresence(room);
+    }
+    return;
   }
+
+  if (presenceTimers.has(key)) return;
+  presenceTimers.set(
+    key,
+    setTimeout(() => {
+      presenceTimers.delete(key);
+      const r = rooms.get(room.code);
+      const p = r && findPlayer(r, playerId);
+      if (r && p && p.connected && !p.isAI) {
+        p.connected = false;
+        broadcastPresence(r);
+      }
+    }, DISCONNECT_GRACE_MS)
+  );
 }
 
 // ============ 工具 ============

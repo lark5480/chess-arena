@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useGameStore } from "@/stores/game-store";
-import { triggerAIMoveIfNeeded } from "@/stores/game-store";
 import type { LobbyInfo } from "@/types";
 
 const LOBBY_KEY = "chess-arena-lobby";
@@ -29,8 +28,75 @@ export function clearLobby(): void {
 }
 
 function handleEventDispatch(e: unknown) {
+  // AI 触发在 store.handleEvent 内部统一处理，这里不要重复调用
   useGameStore.getState().handleEvent(e as any);
-  triggerAIMoveIfNeeded();
+}
+
+/**
+ * 建立 SSE 连接并处理断线：
+ * - 可恢复错误交给浏览器自动重连，同时提示用户；
+ * - 致命关闭（如房间被清理返回 404）时确认一次房间状态，
+ *   仍存在则延迟重建连接，否则停止重连并提示。
+ */
+function connectStream(opts: {
+  code: string;
+  playerId?: string;
+  onFatalGone?: () => void;
+}): () => void {
+  const { code, playerId, onFatalGone } = opts;
+  let es: EventSource | null = null;
+  let disposed = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const scheduleRetry = () => {
+    if (disposed || retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      connect();
+    }, 3000);
+  };
+
+  const confirmRoomGone = () => {
+    fetch(`/api/rooms/${code}`)
+      .then((r) => {
+        if (disposed) return;
+        if (r.status === 404) onFatalGone?.();
+        else scheduleRetry();
+      })
+      .catch(() => {
+        if (!disposed) scheduleRetry();
+      });
+  };
+
+  const connect = () => {
+    if (disposed) return;
+    es?.close();
+    const qs = playerId ? `?playerId=${encodeURIComponent(playerId)}` : "";
+    es = new EventSource(`/api/rooms/${code}/stream${qs}`);
+    es.addEventListener("room", (ev) => {
+      try {
+        handleEventDispatch(JSON.parse((ev as MessageEvent).data));
+      } catch {
+        /* ignore malformed */
+      }
+    });
+    es.onopen = () => useGameStore.getState().setToast(null);
+    es.onerror = () => {
+      if (!es || es.readyState === EventSource.CLOSED) {
+        confirmRoomGone();
+      } else {
+        useGameStore.getState().setToast("连接中断，正在重连…");
+      }
+    };
+  };
+
+  connect();
+
+  return () => {
+    disposed = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    es?.close();
+  };
 }
 
 /**
@@ -41,10 +107,6 @@ export function useRoomGame() {
   const playerId = useGameStore((s) => s.playerId);
   const code = useGameStore((s) => s.code);
   const setLobby = useGameStore((s) => s.setLobby);
-  const handleEvent = useGameStore((s) => s.handleEvent);
-
-  const esRef = useRef<EventSource | null>(null);
-  const codeRef = useRef<string>("");
 
   // 刷新后从 sessionStorage 恢复身份
   useEffect(() => {
@@ -55,67 +117,37 @@ export function useRoomGame() {
 
   useEffect(() => {
     if (!playerId || !code) return;
-    if (esRef.current && codeRef.current === code) return;
-
-    esRef.current?.close();
-    codeRef.current = code;
 
     // 连接即拉取当前全量状态（重连/加入）
     fetch(`/api/rooms/${code}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((room) => {
-        if (room) handleEvent({ type: "state", room });
+        if (room) handleEventDispatch({ type: "state", room });
       })
       .catch(() => {});
 
-    const es = new EventSource(`/api/rooms/${code}/stream`);
-    es.addEventListener("room", (ev) => {
-      try {
-        handleEventDispatch(JSON.parse((ev as MessageEvent).data));
-      } catch {
-        /* ignore malformed */
-      }
+    return connectStream({
+      code,
+      playerId,
+      onFatalGone: () =>
+        useGameStore.getState().setToast("房间不存在或已结束"),
     });
-    es.onerror = () => {
-      /* 浏览器会自动重连 */
-    };
-    esRef.current = es;
-
-    return () => {
-      es.close();
-      esRef.current = null;
-      codeRef.current = "";
-    };
-  }, [playerId, code, handleEvent]);
+  }, [playerId, code]);
 }
 
 /** 观战连接：只读订阅，不写入 playerId */
 export function useSpectate(code: string) {
   const handleEvent = useGameStore((s) => s.handleEvent);
-  const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     if (!code) return;
     fetch(`/api/rooms/${code}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((room) => {
-        if (room) handleEvent({ type: "state", room });
+        if (room) handleEventDispatch({ type: "state", room });
       })
       .catch(() => {});
 
-    const es = new EventSource(`/api/rooms/${code}/stream`);
-    es.addEventListener("room", (ev) => {
-      try {
-        handleEventDispatch(JSON.parse((ev as MessageEvent).data));
-      } catch {
-        /* ignore */
-      }
-    });
-    esRef.current = es;
-
-    return () => {
-      esRef.current?.close();
-      esRef.current = null;
-    };
-  }, [code, handleEvent]);
+    return connectStream({ code });
+  }, [code]);
 }
