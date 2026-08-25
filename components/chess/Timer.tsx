@@ -14,7 +14,6 @@ export function Timer({ color }: { color: Color }) {
   const clockUpdatedAt = useGameStore((s) => s.clockUpdatedAt);
   const gameNo = useGameStore((s) => s.gameNo);
   const declareTimeout = useGameStore((s) => s.declareTimeout);
-  const myColor = useGameStore((s) => s.myColor);
   const playerId = useGameStore((s) => s.playerId);
 
   const serverMs = clocks ? clocks[color] : timeLimit * 1000;
@@ -41,7 +40,7 @@ export function Timer({ color }: { color: Color }) {
     return () => clearInterval(interval);
   }, [status, gameOver, turn, color, timeLimit, clockUpdatedAt, serverMs]);
 
-  // Fire timeout when reaching zero (only own clock)
+  // 时钟归零即上报（含对方时钟：服务端按权威值复核，对方关页也能按钟获胜）
   useEffect(() => {
     if (
       displayMs <= 0 &&
@@ -50,13 +49,12 @@ export function Timer({ color }: { color: Color }) {
       !gameOver &&
       turn === color &&
       timeLimit > 0 &&
-      color === myColor &&
       playerId
     ) {
       firedRef.current = true;
-      declareTimeout();
+      declareTimeout(color);
     }
-  }, [displayMs, status, gameOver, turn, color, timeLimit, myColor, playerId, declareTimeout]);
+  }, [displayMs, status, gameOver, turn, color, timeLimit, playerId, declareTimeout]);
 
   if (timeLimit === 0) {
     return <span className="font-mono text-lg text-muted">∞</span>;

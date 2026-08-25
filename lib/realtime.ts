@@ -32,6 +32,20 @@ export function removeSubscriber(code: string, controller: Controller): void {
   if (set.size === 0) subscribers.delete(code);
 }
 
+/** 房间被清理时，主动关闭该房间所有 SSE 连接并移除订阅 */
+export function closeSubscribers(code: string): void {
+  const set = subscribers.get(code);
+  if (!set) return;
+  subscribers.delete(code);
+  for (const controller of set) {
+    try {
+      controller.close();
+    } catch {
+      /* 已关闭 */
+    }
+  }
+}
+
 /** 向房间内所有订阅者广播事件 */
 export function broadcast(code: string, event: RoomEvent): void {
   const set = subscribers.get(code);

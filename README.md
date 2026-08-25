@@ -101,8 +101,10 @@ chess-arena/
 ├── lib/
 │   ├── chess-engine.ts             # chess.js 封装
 │   ├── ai-engine.ts                # AI 走子引擎
+│   ├── ai.worker.ts                # AI 搜索 Web Worker
 │   ├── store.ts                    # 服务端房间状态（内存 Map）
 │   ├── realtime.ts                 # SSE 订阅管理
+│   ├── rate-limit.ts               # 进程内滑动窗口限流
 │   ├── events.ts                   # SSE 事件序列化
 │   └── utils.ts
 ├── stores/
@@ -111,7 +113,7 @@ chess-arena/
 │   └── index.ts                    # TypeScript 类型
 ├── supabase/
 │   └── schema.sql                  # 可选持久化方案
-├── __tests__/                      # 单元测试（21 项）
+├── __tests__/                      # 单元测试（31 项）
 └── docs/
     ├── 需求PRD.md                   # 产品需求文档
     └── DEPLOYMENT.md               # 部署指南

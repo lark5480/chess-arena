@@ -101,7 +101,7 @@ interface GameStore {
   requestTakeback: () => Promise<void>;
   respondTakeback: (accept: boolean) => Promise<void>;
   rematch: () => Promise<void>;
-  declareTimeout: () => Promise<void>;
+  declareTimeout: (target?: Color) => Promise<void>;
 }
 
 const INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -197,6 +197,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           selectedSquare: null,
           legalTargets: [],
           pendingPromotion: null,
+          ...(e.clocks ? { clocks: { ...e.clocks } } : {}),
           clockUpdatedAt: Date.now(),
         });
         break;
@@ -220,7 +221,15 @@ export const useGameStore = create<GameStore>((set, get) => ({
         set({ takebackBy: e.by });
         break;
       case "takeback_accepted":
-        set({ fen: e.fen, moves: e.moves, turn: e.turn, takebackBy: null, selectedSquare: null, legalTargets: [] });
+        set({
+          fen: e.fen,
+          moves: e.moves,
+          turn: e.turn,
+          takebackBy: null,
+          selectedSquare: null,
+          legalTargets: [],
+          ...(e.clocks ? { clocks: { ...e.clocks } } : {}),
+        });
         break;
       case "takeback_declined":
         set({ takebackBy: null });
@@ -248,9 +257,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
           takebackBy: null,
           opponentConnected: true,
         });
-        break;
-      case "opponent_left":
-        set({ opponentConnected: false });
         break;
     }
     // 对局结束 → 写入本地历史
@@ -355,10 +361,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
     await postAction(set, `/api/rooms/${st.code}/rematch`, { playerId: st.playerId });
   },
 
-  declareTimeout: async () => {
+  declareTimeout: async (target) => {
     const st = get();
     if (!st.code || !st.playerId) return;
-    await postAction(set, `/api/rooms/${st.code}/timeout`, { playerId: st.playerId });
+    await postAction(set, `/api/rooms/${st.code}/timeout`, {
+      playerId: st.playerId,
+      color: target,
+    });
   },
 }));
 
@@ -420,6 +429,9 @@ function applyRoom(
 ) {
   const st = useGameStore.getState();
   const me = room.players.find((p) => p.id === st.playerId);
+  const myColor = me ? me.color : st.myColor;
+  // 对手按颜色推导，不假设固定执黑；尚未加入时视为在线
+  const opponent = myColor ? room.players.find((p) => p.color !== myColor) : undefined;
   set({
     status: room.status,
     timeLimit: room.timeLimit,
@@ -437,10 +449,7 @@ function applyRoom(
     chat: room.chat,
     drawOfferBy: room.draw?.by ?? null,
     takebackBy: room.takeback?.by ?? null,
-    opponentConnected: room.players.some((p) => p.color !== "white" && p.connected) ||
-      room.players.length < 2
-      ? room.players.filter((p) => p.color !== "white").every((p) => p.connected)
-      : true,
+    opponentConnected: opponent ? opponent.connected : true,
   });
 }
 
@@ -507,16 +516,53 @@ export function triggerAIMoveIfNeeded(): void {
   const code = st.code;
   // 模拟思考延迟，体验更自然
   setTimeout(async () => {
-    const move = chooseAIMove(fen, st.aiDifficulty);
-    if (!move) return;
-    try {
-      await fetch(`/api/rooms/${code}/move`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playerId: aiPlayerId, from: move.from, to: move.to, promotion: move.promotion }),
-      });
-    } catch {
-      /* ignore */
-    }
+    requestAIMove(fen, st.aiDifficulty ?? 2, async (move) => {
+      if (!move) return;
+      try {
+        await fetch(`/api/rooms/${code}/move`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playerId: aiPlayerId, from: move.from, to: move.to, promotion: move.promotion }),
+        });
+      } catch {
+        /* ignore */
+      }
+    });
   }, 500 + Math.random() * 600);
+}
+
+// ===== Web Worker 中执行 AI 搜索，避免阻塞主线程 =====
+let aiWorker: Worker | null = null;
+let aiWorkerSeq = 0;
+
+function getAIWorker(): Worker | null {
+  if (typeof window === "undefined" || typeof Worker === "undefined") return null;
+  if (!aiWorker) {
+    try {
+      aiWorker = new Worker(new URL("../lib/ai.worker.ts", import.meta.url));
+    } catch {
+      return null; // 环境不支持时回退主线程同步计算（如测试环境）
+    }
+  }
+  return aiWorker;
+}
+
+type AIMoveResult = { id: number; move: import("@/lib/ai-engine").AIMove | null };
+
+function requestAIMove(
+  fen: string,
+  depth: number,
+  onDone: (move: import("@/lib/ai-engine").AIMove | null) => void
+): void {
+  const worker = getAIWorker();
+  if (!worker) {
+    onDone(chooseAIMove(fen, depth));
+    return;
+  }
+  const id = ++aiWorkerSeq;
+  worker.onmessage = (ev: MessageEvent<AIMoveResult>) => {
+    if (ev.data?.id !== id) return; // 丢弃过期请求的结果
+    onDone(ev.data.move ?? null);
+  };
+  worker.postMessage({ fen, depth, id });
 }
