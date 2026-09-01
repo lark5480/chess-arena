@@ -62,8 +62,7 @@ export default function HistoryPage() {
                   {e.white} <span className="text-muted">vs</span> {e.black}
                 </div>
                 <div className="text-sm text-muted">
-                  房间 {e.code} · 第 {e.gameNo} 局 ·{" "}
-                  {new Date(e.endedAt).toLocaleString("zh-CN")}
+                  房间 {e.code} · 第 {e.gameNo} 局 · {new Date(e.endedAt).toLocaleString("zh-CN")}
                 </div>
                 <div className="mt-1 text-sm text-accent-soft">{resultText(e.result)}</div>
               </div>

@@ -69,7 +69,11 @@ export function ChessBoard() {
       else if (chess.isCheck()) play("check");
       else {
         const last = moves[moves.length - 1];
-        const before = createGame(moves.length > 1 ? moves[moves.length - 2].fen : "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+        const before = createGame(
+          moves.length > 1
+            ? moves[moves.length - 2].fen
+            : "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        );
         const after = createGame(fen);
         const captured = pieceCount(before) > pieceCount(after);
         play(captured ? "capture" : "move");
@@ -127,7 +131,8 @@ export function ChessBoard() {
   }
 
   const customSquareStyles: Record<string, React.CSSProperties> = {};
-  const last = moves[moves.length - 1];
+  // 回看时高亮所看着法，实时模式高亮最后一手
+  const last = isReviewing && viewIndex !== null ? moves[viewIndex] : moves[moves.length - 1];
   if (last) {
     customSquareStyles[last.from] = { backgroundColor: "rgba(255, 214, 102, 0.35)" };
     customSquareStyles[last.to] = { backgroundColor: "rgba(255, 214, 102, 0.35)" };
@@ -137,8 +142,7 @@ export function ChessBoard() {
   }
   for (const sq of legalTargets) {
     customSquareStyles[sq] = {
-      background:
-        "radial-gradient(circle, rgba(255,92,26,0.45) 22%, transparent 24%)",
+      background: "radial-gradient(circle, rgba(255,92,26,0.45) 22%, transparent 24%)",
       borderRadius: "50%",
     };
   }
@@ -162,7 +166,15 @@ export function ChessBoard() {
       <Chessboard
         position={effectiveFen}
         boardWidth={width}
-        boardOrientation={flipped ? (myColor === "black" ? "white" : "black") : (myColor === "black" ? "black" : "white")}
+        boardOrientation={
+          flipped
+            ? myColor === "black"
+              ? "white"
+              : "black"
+            : myColor === "black"
+              ? "black"
+              : "white"
+        }
         onPieceDrop={onPieceDrop}
         onSquareClick={onSquareClick}
         arePiecesDraggable={interactive}

@@ -15,8 +15,9 @@ type AnyRoom = {
 };
 
 function rawRoom(code: string): AnyRoom {
-  return (globalThis as unknown as { __chessArenaRooms: Map<string, AnyRoom> })
-    .__chessArenaRooms.get(code.toUpperCase())!;
+  return (
+    globalThis as unknown as { __chessArenaRooms: Map<string, AnyRoom> }
+  ).__chessArenaRooms.get(code.toUpperCase())!;
 }
 
 // ===== 超时上报（M1） =====

@@ -9,8 +9,7 @@ type Controller = ReadableStreamDefaultController<Uint8Array>;
 const globalForSubs = globalThis as unknown as {
   __chessArenaSubs?: Map<string, Set<Controller>>;
 };
-const subscribers: Map<string, Set<Controller>> =
-  globalForSubs.__chessArenaSubs ?? new Map();
+const subscribers: Map<string, Set<Controller>> = globalForSubs.__chessArenaSubs ?? new Map();
 if (!globalForSubs.__chessArenaSubs) {
   globalForSubs.__chessArenaSubs = subscribers;
 }
@@ -44,6 +43,18 @@ export function closeSubscribers(code: string): void {
       /* 已关闭 */
     }
   }
+}
+
+/** 某房间的当前订阅连接数（用于连接数上限） */
+export function subscriberCount(code: string): number {
+  return subscribers.get(code)?.size ?? 0;
+}
+
+/** 全局订阅连接总数（用于连接数上限，防 SSE 洪泛耗尽内存） */
+export function totalSubscriberCount(): number {
+  let n = 0;
+  for (const set of subscribers.values()) n += set.size;
+  return n;
 }
 
 /** 向房间内所有订阅者广播事件 */

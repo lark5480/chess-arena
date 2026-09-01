@@ -144,14 +144,36 @@ test("第一局：人类执白走子后，AI（执黑）自动应招", () => {
   const mock = mockTimersAndFetch();
   try {
     const st = useGameStore.getState();
-    st.setLobby({ code: "AIROOM1", playerId: human.id, myColor: "white", myName: "A", mode: "ai", aiPlayerId: aiBot.id });
-    st.handleEvent({ type: "game_start", fen: START_FEN, turn: "white", timeLimit: 600, white: human, black: aiBot });
+    st.setLobby({
+      code: "AIROOM1",
+      playerId: human.id,
+      myColor: "white",
+      myName: "A",
+      mode: "ai",
+      aiPlayerId: aiBot.id,
+    });
+    st.handleEvent({
+      type: "game_start",
+      fen: START_FEN,
+      turn: "white",
+      timeLimit: 600,
+      white: human,
+      black: aiBot,
+    });
     // 人类走 e4，服务端广播 move 后轮到黑方（AI）
     const chess = createGame(START_FEN);
     const r = applyMove(chess, { from: "e2", to: "e4" });
     st.handleEvent({
       type: "move",
-      move: { moveNumber: 1, san: "e4", fen: r.fen!, from: "e2", to: "e4", playedBy: "white", playedAt: Date.now() },
+      move: {
+        moveNumber: 1,
+        san: "e4",
+        fen: r.fen!,
+        from: "e2",
+        to: "e4",
+        playedBy: "white",
+        playedAt: Date.now(),
+      },
       fen: r.fen!,
       turn: "black",
       gameOver: false,
@@ -168,7 +190,14 @@ test("再来一局交换先后手后：AI 改为执白并率先落子，且我�
   const mock = mockTimersAndFetch();
   try {
     const st = useGameStore.getState();
-    st.setLobby({ code: "AIROOM2", playerId: human.id, myColor: "white", myName: "A", mode: "ai", aiPlayerId: aiBot.id });
+    st.setLobby({
+      code: "AIROOM2",
+      playerId: human.id,
+      myColor: "white",
+      myName: "A",
+      mode: "ai",
+      aiPlayerId: aiBot.id,
+    });
     // 模拟第一局结束 + rematch 广播：AI 变白、人类变黑
     st.handleEvent({
       type: "rematch",
@@ -195,7 +224,14 @@ test("触发条件：轮到我方（人类）时 AI 不应自动走子", () => {
   const mock = mockTimersAndFetch();
   try {
     const st = useGameStore.getState();
-    st.setLobby({ code: "AIROOM3", playerId: human.id, myColor: "black", myName: "A", mode: "ai", aiPlayerId: aiBot.id });
+    st.setLobby({
+      code: "AIROOM3",
+      playerId: human.id,
+      myColor: "black",
+      myName: "A",
+      mode: "ai",
+      aiPlayerId: aiBot.id,
+    });
     st.handleEvent({
       type: "rematch",
       gameNo: 2,

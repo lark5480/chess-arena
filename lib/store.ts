@@ -45,12 +45,37 @@ function now(): number {
   return Date.now();
 }
 
+// ============ 输入清洗与校验 ============
+const VALID_TIME_LIMITS: readonly TimeLimit[] = [0, 300, 600, 900];
+const MAX_NAME_LEN = 20;
+const MAX_AVATAR_LEN = 8;
+const MAX_CHAT_LEN = 500;
+const MAX_CHAT_HISTORY = 200;
+/** 进程内房间总数上限（内存存储兜底，防无限创建） */
+const MAX_ROOMS = 500;
+
+function sanitizeName(name: unknown, fallback: string): string {
+  return typeof name === "string" && name.trim() ? name.trim().slice(0, MAX_NAME_LEN) : fallback;
+}
+function sanitizeAvatar(avatar: unknown): string | undefined {
+  return typeof avatar === "string" && avatar ? avatar.slice(0, MAX_AVATAR_LEN) : undefined;
+}
+/** 时限白名单校验：非 {0,300,600,900} 一律回落 600（0 = 无限制，不能被 falsy 兜底吃掉） */
+function normalizeTimeLimit(v: unknown): TimeLimit {
+  return VALID_TIME_LIMITS.includes(v as TimeLimit) ? (v as TimeLimit) : 600;
+}
+
 function getOrCreateChess(room: Room) {
   if (!room.chess) room.chess = createGame(room.currentFen);
   else room.chess.load(room.currentFen);
   return room.chess;
 }
 
+/**
+ * 快照（对外下发）。players[].id 一律置空：playerId 是走子/认输等操作的唯一凭证，
+ * 只能通过创建/加入的私有响应下发给本人，绝不能随快照/广播泄露给观战者或对手。
+ * 客户端凭 sessionStorage 中的 lobby 身份识别自己（myColor），无需他人 id。
+ */
 function snapshot(room: Room): RoomState {
   return {
     code: room.code,
@@ -63,7 +88,7 @@ function snapshot(room: Room): RoomState {
     turn: room.turn,
     clocks: room.clocks ? { ...room.clocks } : undefined,
     clockUpdatedAt: room.clockUpdatedAt,
-    players: room.players.map((p) => ({ ...p })),
+    players: room.players.map((p) => ({ ...p, id: "" })),
     moves: room.moves.map((m) => ({ ...m })),
     chat: room.chat.map((c) => ({ ...c })),
     gameOver: room.gameOver,
@@ -76,7 +101,19 @@ function snapshot(room: Room): RoomState {
 function systemChat(room: Room, text: string): ChatMessage {
   const msg: ChatMessage = { id: genId(), from: "系统", text, at: now(), system: true };
   room.chat.push(msg);
+  // 聊天记录封顶，防单房间内存无限增长
+  if (room.chat.length > MAX_CHAT_HISTORY) room.chat.splice(0, room.chat.length - MAX_CHAT_HISTORY);
   return msg;
+}
+
+/** 结果播报写入聊天并广播（否则客户端要等下次全量快照才能看到） */
+function broadcastSystemChat(room: Room, text: string): void {
+  broadcast(room.code, { type: "chat", message: systemChat(room, text) });
+}
+
+/** 对外下发用的玩家对象（隐去 id 凭证） */
+function publicPlayer(p: Player): Player {
+  return { ...p, id: "" };
 }
 
 function findPlayer(room: Room, playerId: string): Player | undefined {
@@ -109,40 +146,43 @@ export function sweepExpiredRooms(): void {
   const nowTs = now();
   for (const [code, room] of rooms) {
     const base =
-      room.status === "finished" ? room.finishedAt ?? lastActivityAt(room) : lastActivityAt(room);
+      room.status === "finished" ? (room.finishedAt ?? lastActivityAt(room)) : lastActivityAt(room);
     const ttl = room.status === "finished" ? FINISHED_ROOM_TTL : IDLE_ROOM_TTL;
     if (nowTs - base > ttl) {
       rooms.delete(code);
       closeSubscribers(code);
+      for (const p of room.players) presenceDropRoom(`${code}:${p.id}`);
     }
   }
   pruneRateLimit(60_000);
 }
 
 // ============ 创建 / 加入 ============
-export function createRoom(opts: {
-  name?: string;
-  timeLimit?: TimeLimit;
-  avatar?: string;
-}): { code: string; playerId: string; color: Color } {
+export function createRoom(opts: { name?: string; timeLimit?: TimeLimit; avatar?: string }): {
+  code: string;
+  playerId: string;
+  color: Color;
+} {
   sweepExpiredRooms();
+  if (rooms.size >= MAX_ROOMS) throw new RoomError("服务器繁忙，请稍后再试", 503);
 
   let code = genCode();
   while (rooms.has(code)) code = genCode();
 
   const playerId = genId();
+  const timeLimit = normalizeTimeLimit(opts.timeLimit);
   const white: Player = {
     id: playerId,
-    name: opts.name?.trim() || "玩家1",
+    name: sanitizeName(opts.name, "玩家1"),
     color: "white",
     connected: true,
-    avatar: opts.avatar,
+    avatar: sanitizeAvatar(opts.avatar),
   };
 
   const room: Room = {
     code,
     status: "waiting",
-    timeLimit: opts.timeLimit ?? 600,
+    timeLimit,
     createdAt: now(),
     gameNo: 1,
     currentFen: START_FEN,
@@ -151,7 +191,7 @@ export function createRoom(opts: {
     moves: [],
     chat: [],
     gameOver: false,
-    clocks: { white: (opts.timeLimit ?? 600) * 1000, black: (opts.timeLimit ?? 600) * 1000 },
+    clocks: { white: timeLimit * 1000, black: timeLimit * 1000 },
     clockUpdatedAt: now(),
   };
   rooms.set(code, room);
@@ -176,10 +216,10 @@ export function joinRoom(
   const playerId = genId();
   const black: Player = {
     id: playerId,
-    name: opts.name?.trim() || "玩家2",
+    name: sanitizeName(opts.name, "玩家2"),
     color: "black",
     connected: true,
-    avatar: opts.avatar,
+    avatar: sanitizeAvatar(opts.avatar),
   };
   room.players.push(black);
 
@@ -205,8 +245,8 @@ export function joinRoom(
     fen: START_FEN,
     turn: "white",
     timeLimit: room.timeLimit,
-    white,
-    black,
+    white: publicPlayer(white),
+    black: publicPlayer(black),
   });
   return { code: room.code, playerId, color: "black", room: roomState };
 }
@@ -224,7 +264,7 @@ export function joinAIRoom(
   const aiId = genId();
   const black: Player = {
     id: aiId,
-    name: opts.name?.trim() || "🤖 电脑",
+    name: sanitizeName(opts.name, "🤖 电脑"),
     color: "black",
     connected: true,
     isAI: true,
@@ -253,8 +293,8 @@ export function joinAIRoom(
     fen: START_FEN,
     turn: "white",
     timeLimit: room.timeLimit,
-    white,
-    black,
+    white: publicPlayer(white),
+    black: publicPlayer(black),
   });
   return { code: room.code, playerId: aiId, color: "black", room: roomState };
 }
@@ -276,19 +316,25 @@ export function applyMoveAction(
 ): MoveOutcome {
   const room = rooms.get(code.toUpperCase());
   if (!room) return { ok: false, error: "房间不存在" };
-  if (room.status !== "playing" || room.gameOver)
-    return { ok: false, error: "当前不可走子" };
+  if (room.status !== "playing" || room.gameOver) return { ok: false, error: "当前不可走子" };
 
   const player = findPlayer(room, req.playerId);
   if (!player) return { ok: false, error: "玩家不存在" };
   if (room.turn !== player.color) return { ok: false, error: "未轮到您走子" };
   if (!player.connected) return { ok: false, error: "您已离线" };
 
-  // 重试/重复走子防护：若已有相同序号且相同走法，拒绝
+  // 落子前先核时钟：钟面已耗尽且超出网络容差 → 该步棋超时无效，直接判负。
+  // 防止"超时走子被接受、时钟钳到 0 后停表导致永远无法判超时"的不一致。
+  const elapsed = now() - room.clockUpdatedAt;
+  if (room.timeLimit > 0 && room.clocks[player.color] - elapsed < -TIMEOUT_TOLERANCE_MS) {
+    return timeoutByMoveLateness(room, player.color);
+  }
+
   const chess = getOrCreateChess(room);
   const res = applyMove(chess, { from: req.from, to: req.to, promotion: req.promotion });
   if (!res.ok || !res.fen) return { ok: false, error: res.error ?? "非法走子" };
 
+  const clocksBefore: Clocks = { ...room.clocks };
   const moveNumber = room.moves.length + 1;
   const move: MoveRecord = {
     moveNumber,
@@ -299,10 +345,10 @@ export function applyMoveAction(
     promotion: req.promotion,
     playedBy: player.color,
     playedAt: now(),
+    clocksBefore,
   };
   room.moves.push(move);
   room.currentFen = res.fen;
-  const elapsed = now() - room.clockUpdatedAt;
   room.clocks[player.color] = Math.max(0, room.clocks[player.color] - elapsed);
   room.clockUpdatedAt = now();
 
@@ -312,6 +358,9 @@ export function applyMoveAction(
     room.gameOver = true;
     room.status = "finished";
     room.finishedAt = now();
+    // 终局清除残留的求和/悔棋请求，防止对已结束对局继续响应
+    room.draw = undefined;
+    room.takeback = undefined;
     result = {
       gameNo: room.gameNo,
       winner: end.winner,
@@ -323,7 +372,6 @@ export function applyMoveAction(
     room.turn = invertColor(player.color);
   }
 
-  const roomState = snapshot(room);
   broadcast(room.code, {
     type: "move",
     move,
@@ -334,8 +382,8 @@ export function applyMoveAction(
     clocks: { ...room.clocks },
   });
   if (result) {
-    systemChat(room, resultMessage(result));
-    // 结果已在 move 事件中带出，无需重复广播
+    // 结果播报随聊天事件即时下发（快照里的 chat 客户端要等全量 state 才能看到）
+    broadcastSystemChat(room, resultMessage(result));
   }
   return {
     ok: true,
@@ -356,6 +404,7 @@ export function sendChatAction(
   if (!room) return { ok: false, error: "房间不存在" };
   const player = findPlayer(room, req.playerId);
   if (!player) return { ok: false, error: "玩家不存在" };
+  if (typeof req.text !== "string") return { ok: false, error: "消息格式错误" };
   const text = req.text.trim();
   if (!text) return { ok: false, error: "消息为空" };
 
@@ -363,10 +412,11 @@ export function sendChatAction(
     id: genId(),
     from: player.name,
     color: player.color,
-    text: text.slice(0, 500),
+    text: text.slice(0, MAX_CHAT_LEN),
     at: now(),
   };
   room.chat.push(message);
+  if (room.chat.length > MAX_CHAT_HISTORY) room.chat.splice(0, room.chat.length - MAX_CHAT_HISTORY);
   broadcast(room.code, { type: "chat", message });
   return { ok: true, message };
 }
@@ -389,8 +439,10 @@ export function resignAction(code: string, playerId: string): MoveOutcome {
   room.status = "finished";
   room.finishedAt = now();
   room.result = result;
-  systemChat(room, resultMessage(result));
+  room.draw = undefined;
+  room.takeback = undefined;
   broadcast(room.code, { type: "resign", by: player.color, result });
+  broadcastSystemChat(room, resultMessage(result));
   return { ok: true, result };
 }
 
@@ -401,25 +453,27 @@ export function drawOfferAction(code: string, playerId: string) {
     return { ok: false, error: "当前不可提议和棋" };
   const player = findPlayer(room, playerId);
   if (!player) return { ok: false, error: "玩家不存在" };
+  if (room.draw?.pending) return { ok: false, error: "已有待处理的和棋请求" };
   room.draw = { by: player.color, pending: true };
   broadcast(room.code, { type: "draw_offer", by: player.color });
+  // 人机模式：AI 拒绝和棋（保持对弈；简单启发不复杂化）
+  if (playerByColor(room, invertColor(player.color))?.isAI) {
+    room.draw = undefined;
+    broadcast(room.code, { type: "draw_declined", by: invertColor(player.color) });
+  }
   return { ok: true };
 }
 
-export function drawRespondAction(
-  code: string,
-  playerId: string,
-  action: "accept" | "decline"
-) {
+export function drawRespondAction(code: string, playerId: string, action: "accept" | "decline") {
   const room = rooms.get(code.toUpperCase());
   if (!room || !room.draw || !room.draw.pending)
     return { ok: false, error: "没有待处理的和棋请求" };
+  // 对局已结束（将死/超时/认输在请求挂起期间落地）时拒绝响应，防止改写已定结果
+  if (room.status !== "playing" || room.gameOver) return { ok: false, error: "对局已结束" };
   const player = findPlayer(room, playerId);
   if (!player) return { ok: false, error: "玩家不存在" };
-  if (player.color === room.draw.by)
-    return { ok: false, error: "不能对自己的请求进行操作" };
+  if (player.color === room.draw.by) return { ok: false, error: "不能对自己的请求进行操作" };
 
-  const by = room.draw.by;
   if (action === "accept") {
     const result: GameResult = {
       gameNo: room.gameNo,
@@ -432,8 +486,9 @@ export function drawRespondAction(
     room.finishedAt = now();
     room.result = result;
     room.draw = undefined;
-    systemChat(room, resultMessage(result));
+    room.takeback = undefined;
     broadcast(room.code, { type: "draw_accepted", result });
+    broadcastSystemChat(room, resultMessage(result));
     return { ok: true, result };
   } else {
     room.draw = undefined;
@@ -449,8 +504,16 @@ export function takebackRequestAction(code: string, playerId: string) {
     return { ok: false, error: "当前不可请求悔棋" };
   const player = findPlayer(room, playerId);
   if (!player) return { ok: false, error: "玩家不存在" };
+  if (room.moves.length === 0) return { ok: false, error: "还没有可悔的棋" };
+  if (room.takeback?.pending) return { ok: false, error: "已有待处理的悔棋请求" };
   room.takeback = { by: player.color, pending: true };
   broadcast(room.code, { type: "takeback_request", by: player.color });
+  // 人机模式：AI 同意悔棋（人类请求悔 AI 的上一步）。走错一步不至于毁掉整局。
+  const responder = playerByColor(room, invertColor(player.color));
+  if (responder?.isAI) {
+    // 走内部逻辑直接复用响应路径（含终局守卫、退钟、广播）
+    takebackRespondAction(code, responder.id, "accept");
+  }
   return { ok: true };
 }
 
@@ -462,28 +525,29 @@ export function takebackRespondAction(
   const room = rooms.get(code.toUpperCase());
   if (!room || !room.takeback || !room.takeback.pending)
     return { ok: false, error: "没有待处理的悔棋请求" };
+  // 对局已结束时拒绝响应，防止悔棋回退棋盘但结果仍为已结束的矛盾状态
+  if (room.status !== "playing" || room.gameOver) return { ok: false, error: "对局已结束" };
   const player = findPlayer(room, playerId);
   if (!player) return { ok: false, error: "玩家不存在" };
-  if (player.color === room.takeback.by)
-    return { ok: false, error: "不能对自己的请求进行操作" };
+  if (player.color === room.takeback.by) return { ok: false, error: "不能对自己的请求进行操作" };
 
-  const by = room.takeback.by;
   if (action === "accept") {
     if (room.moves.length > 0) {
-      room.moves.pop();
-      const prevFen = room.moves.length
-        ? room.moves[room.moves.length - 1].fen
-        : START_FEN;
-      room.currentFen = prevFen;
+      const last = room.moves.pop()!;
+      room.currentFen = room.moves.length ? room.moves[room.moves.length - 1].fen : START_FEN;
       room.turn = room.moves.length
         ? invertColor(room.moves[room.moves.length - 1].playedBy)
         : "white";
+      // 回退时钟到被悔着法之前的状态：否则被回退方要替对手的思考时间买单
+      if (last.clocksBefore) room.clocks = { ...last.clocksBefore };
     } else {
       room.currentFen = START_FEN;
       room.turn = "white";
     }
     room.takeback = undefined;
     room.chess = createGame(room.currentFen);
+    // 悔棋重置计时基准：从悔棋生效的时刻重新起算
+    room.clockUpdatedAt = now();
     const moves = room.moves.map((m) => ({ ...m }));
     broadcast(room.code, {
       type: "takeback_accepted",
@@ -520,13 +584,16 @@ export function timeoutAction(code: string, playerId: string, target?: Color) {
   const loser = playerByColor(room, loserColor);
   if (!loser) return { ok: false, error: "玩家不存在" };
 
-  // 轮到被判方时时钟在走，需扣减自上次扣时以来的耗时
-  const elapsed = now() - room.clockUpdatedAt;
-  const remaining =
-    room.turn === loserColor
-      ? Math.max(0, room.clocks[loserColor] - elapsed)
-      : room.clocks[loserColor];
-  if (remaining > TIMEOUT_TOLERANCE_MS) return { ok: false, error: "尚未超时" };
+  if (room.turn === loserColor) {
+    // 轮到被判方：时钟在走，扣减自上次扣时以来的耗时再比较
+    const elapsed = now() - room.clockUpdatedAt;
+    const remaining = Math.max(0, room.clocks[loserColor] - elapsed);
+    if (remaining > TIMEOUT_TOLERANCE_MS) return { ok: false, error: "尚未超时" };
+  } else {
+    // 停表方：钟面有余量说明其在时内完成了上一步，不应被追判；
+    // 钟面恰好为 0（走子时耗尽）视为旗子已倒，可判负
+    if (room.clocks[loserColor] > 0) return { ok: false, error: "该方时钟未耗尽" };
+  }
 
   const result: GameResult = {
     gameNo: room.gameNo,
@@ -538,17 +605,37 @@ export function timeoutAction(code: string, playerId: string, target?: Color) {
   room.status = "finished";
   room.finishedAt = now();
   room.result = result;
-  systemChat(room, resultMessage(result));
+  room.draw = undefined;
+  room.takeback = undefined;
   broadcast(room.code, { type: "timeout", by: loserColor, result });
+  broadcastSystemChat(room, resultMessage(result));
   return { ok: true, result };
+}
+
+/** 走子请求晚于时钟耗尽（超出容差）到达：该步无效，走子方判负 */
+function timeoutByMoveLateness(room: Room, loserColor: Color): MoveOutcome {
+  const result: GameResult = {
+    gameNo: room.gameNo,
+    winner: invertColor(loserColor),
+    reason: "timeout",
+    endedAt: now(),
+  };
+  room.gameOver = true;
+  room.status = "finished";
+  room.finishedAt = now();
+  room.result = result;
+  room.draw = undefined;
+  room.takeback = undefined;
+  broadcast(room.code, { type: "timeout", by: loserColor, result });
+  broadcastSystemChat(room, resultMessage(result));
+  return { ok: false, error: "您已超时，对局结束", result };
 }
 
 // ============ 再来一局 ============
 export function rematchAction(code: string, playerId: string) {
   const room = rooms.get(code.toUpperCase());
   if (!room) return { ok: false, error: "房间不存在" };
-  if (room.status !== "finished")
-    return { ok: false, error: "当前对局尚未结束" };
+  if (room.status !== "finished") return { ok: false, error: "当前对局尚未结束" };
   const player = findPlayer(room, playerId);
   if (!player) return { ok: false, error: "玩家不存在" };
 
@@ -581,8 +668,8 @@ export function rematchAction(code: string, playerId: string) {
     fen: START_FEN,
     turn: "white",
     timeLimit: room.timeLimit,
-    white,
-    black,
+    white: publicPlayer(white),
+    black: publicPlayer(black),
   });
   return { ok: true };
 }
@@ -591,11 +678,15 @@ export function rematchAction(code: string, playerId: string) {
 const globalForPresence = globalThis as unknown as {
   __chessArenaPresenceTimers?: Map<string, ReturnType<typeof setTimeout>>;
 };
-const presenceTimers: Map<string, ReturnType<typeof setTimeout>> =
-  globalForPresence.__chessArenaPresenceTimers ?? new Map();
+const presenceTimers: Map<
+  string,
+  ReturnType<typeof setTimeout>
+> = globalForPresence.__chessArenaPresenceTimers ?? new Map();
 if (!globalForPresence.__chessArenaPresenceTimers) {
   globalForPresence.__chessArenaPresenceTimers = presenceTimers;
 }
+/** 同一玩家的并发 SSE 连接数（多标签页共享身份）：归零才判离线 */
+const connectionCounts: Map<string, number> = new Map();
 
 /** SSE 短暂断开（如 Serverless 函数超时后重连）的离线宽限期 */
 const DISCONNECT_GRACE_MS = 10_000;
@@ -606,6 +697,7 @@ function broadcastPresence(room: Room) {
 
 /**
  * 标记玩家在线/离线（由 SSE 连接/断开驱动）。
+ * 同一玩家可能开多个标签页（共享 sessionStorage 身份）：连接计数归零才视为离线。
  * 离线有宽限期，期间重连则取消；状态变化时广播全量快照。
  */
 export function setConnected(code: string, playerId: string, connected: boolean) {
@@ -616,6 +708,7 @@ export function setConnected(code: string, playerId: string, connected: boolean)
   const key = `${room.code}:${playerId}`;
 
   if (connected) {
+    connectionCounts.set(key, (connectionCounts.get(key) ?? 0) + 1);
     const timer = presenceTimers.get(key);
     if (timer) {
       clearTimeout(timer);
@@ -628,6 +721,13 @@ export function setConnected(code: string, playerId: string, connected: boolean)
     return;
   }
 
+  const count = (connectionCounts.get(key) ?? 0) - 1;
+  if (count > 0) {
+    // 还有其他标签页/连接在场，保持在线
+    connectionCounts.set(key, count);
+    return;
+  }
+  connectionCounts.delete(key);
   if (presenceTimers.has(key)) return;
   presenceTimers.set(
     key,
@@ -641,6 +741,14 @@ export function setConnected(code: string, playerId: string, connected: boolean)
       }
     }, DISCONNECT_GRACE_MS)
   );
+}
+
+/** 房间被清扫时清掉残留的连接计数，防止 Map 泄漏 */
+function presenceDropRoom(keyPrefix: string): void {
+  // key 形如 CODE:playerId；清扫时房间已删，逐 key 前缀匹配删除
+  for (const key of connectionCounts.keys()) {
+    if (key.startsWith(keyPrefix)) connectionCounts.delete(key);
+  }
 }
 
 // ============ 工具 ============

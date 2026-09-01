@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { joinAIRoom, RoomError } from "@/lib/store";
+import { rateLimitGuard } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(
-  req: Request,
-  { params }: { params: { code: string } }
-) {
+export async function POST(req: Request, { params }: { params: { code: string } }) {
+  // 房间码即凭证：限流防枚举房间码后恶意注入 AI
+  const limited = rateLimitGuard(req, "ai-join", 10);
+  if (limited) return limited;
   const body = (await req.json().catch(() => ({}))) as { name?: string };
   try {
     const res = joinAIRoom(params.code, { name: body.name });

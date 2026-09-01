@@ -1,17 +1,9 @@
 import { NextResponse } from "next/server";
 import { createRoom } from "@/lib/store";
-import { allowRequest } from "@/lib/rate-limit";
-import type { CreateRoomRequest, TimeLimit } from "@/types";
+import { allowRequest, clientIp } from "@/lib/rate-limit";
+import type { CreateRoomRequest } from "@/types";
 
 export const dynamic = "force-dynamic";
-
-function clientIp(req: Request): string {
-  return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown"
-  );
-}
 
 export async function POST(req: Request) {
   const ip = clientIp(req);
@@ -19,7 +11,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "创建过于频繁，请稍后再试" }, { status: 429 });
   }
   const body = (await req.json().catch(() => ({}))) as CreateRoomRequest;
-  const timeLimit = ((body.timeLimit ?? 600) as TimeLimit) || 600;
-  const res = createRoom({ name: body.name, timeLimit, avatar: body.avatar });
+  // timeLimit 的白名单校验在 createRoom 内完成（0=无限制会被此处 ?? 保留）
+  const res = createRoom({ name: body.name, timeLimit: body.timeLimit, avatar: body.avatar });
   return NextResponse.json(res);
 }

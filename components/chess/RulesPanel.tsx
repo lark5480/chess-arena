@@ -58,7 +58,8 @@ export function RulesPanel() {
       {open && (
         <div className="mt-3 space-y-3 text-muted">
           <p>
-            国际象棋双方各 16 枚棋子，目标是将死对方的王。轮到某一方走时，若该方王正被攻击，称为“被将军”，必须立即应将。
+            国际象棋双方各 16
+            枚棋子，目标是将死对方的王。轮到某一方走时，若该方王正被攻击，称为“被将军”，必须立即应将。
           </p>
 
           <div className="overflow-hidden rounded-lg border border-border">
@@ -73,7 +74,9 @@ export function RulesPanel() {
               <tbody className="divide-y divide-border">
                 {PIECE_RULES.map((p) => (
                   <tr key={p.name} className="align-top">
-                    <td className="px-3 py-2 font-medium text-foreground whitespace-nowrap">{p.name}</td>
+                    <td className="px-3 py-2 font-medium text-foreground whitespace-nowrap">
+                      {p.name}
+                    </td>
                     <td className="px-3 py-2">{p.move}</td>
                     <td className="px-3 py-2">
                       {p.capture}
@@ -87,10 +90,12 @@ export function RulesPanel() {
 
           <div className="space-y-1 text-xs">
             <p>
-              <span className="text-foreground font-medium">胜负：</span>将死对方王获胜；逼和、三次重复局面、50 步规则、子力不足则为和棋。
+              <span className="text-foreground font-medium">胜负：</span>
+              将死对方王获胜；逼和、三次重复局面、50 步规则、子力不足则为和棋。
             </p>
             <p>
-              <span className="text-foreground font-medium">提示：</span>被将军时，王所在格会闪烁红色，请尽快应将。
+              <span className="text-foreground font-medium">提示：</span>
+              被将军时，王所在格会闪烁红色，请尽快应将。
             </p>
           </div>
         </div>

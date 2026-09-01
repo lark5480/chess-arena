@@ -7,6 +7,7 @@ import { MoveHistory } from "@/components/chess/MoveHistory";
 import { GameControls } from "@/components/chess/GameControls";
 import { ChatPanel } from "@/components/room/ChatPanel";
 import { RulesPanel } from "@/components/chess/RulesPanel";
+import { StatusNotice } from "@/components/ui/StatusNotice";
 import type { Color } from "@/types";
 
 const ChessBoard = dynamic(
@@ -28,6 +29,7 @@ export function GameView({ spectator = false }: { spectator?: boolean }) {
       </div>
 
       <div className="flex flex-col gap-3">
+        <StatusNotice />
         {!spectator && (
           <div className="rounded-xl border border-border bg-surface p-3">
             <GameControls />

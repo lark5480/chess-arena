@@ -86,6 +86,6 @@ test("generatePgn 输出标准 PGN 头", () => {
   const g = createGame();
   applyMove(g, { from: "e2", to: "e4" });
   const pgn = generatePgn(g, { white: "Alice", black: "Bob", result: "*" });
-  assert.ok(pgn.includes("[Event \"Chess Arena\"]"));
+  assert.ok(pgn.includes('[Event "Chess Arena"]'));
   assert.ok(pgn.includes("1. e4"));
 });

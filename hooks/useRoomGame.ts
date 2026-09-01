@@ -35,6 +35,7 @@ function handleEventDispatch(e: unknown) {
 /**
  * 建立 SSE 连接并处理断线：
  * - 可恢复错误交给浏览器自动重连，同时提示用户；
+ * - 指数退避重试（3s 起、上限 30s，带随机抖动），避免故障期所有客户端同步重连风暴；
  * - 致命关闭（如房间被清理返回 404）时确认一次房间状态，
  *   仍存在则延迟重建连接，否则停止重连并提示。
  */
@@ -47,13 +48,17 @@ function connectStream(opts: {
   let es: EventSource | null = null;
   let disposed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryCount = 0;
 
   const scheduleRetry = () => {
     if (disposed || retryTimer) return;
+    const backoff = Math.min(3000 * 2 ** retryCount, 30_000);
+    const delay = backoff + Math.random() * 1000; // 抖动打散各客户端的重连节奏
+    retryCount += 1;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       connect();
-    }, 3000);
+    }, delay);
   };
 
   const confirmRoomGone = () => {
@@ -80,7 +85,10 @@ function connectStream(opts: {
         /* ignore malformed */
       }
     });
-    es.onopen = () => useGameStore.getState().setToast(null);
+    es.onopen = () => {
+      retryCount = 0;
+      useGameStore.getState().setToast(null);
+    };
     es.onerror = () => {
       if (!es || es.readyState === EventSource.CLOSED) {
         confirmRoomGone();
@@ -118,19 +126,11 @@ export function useRoomGame() {
   useEffect(() => {
     if (!playerId || !code) return;
 
-    // 连接即拉取当前全量状态（重连/加入）
-    fetch(`/api/rooms/${code}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((room) => {
-        if (room) handleEventDispatch({ type: "state", room });
-      })
-      .catch(() => {});
-
+    // 全量状态由 SSE 建连时的初始快照推送，无需重复 fetch
     return connectStream({
       code,
       playerId,
-      onFatalGone: () =>
-        useGameStore.getState().setToast("房间不存在或已结束"),
+      onFatalGone: () => useGameStore.getState().setToast("房间不存在或已结束"),
     });
   }, [playerId, code]);
 }
@@ -141,13 +141,6 @@ export function useSpectate(code: string) {
 
   useEffect(() => {
     if (!code) return;
-    fetch(`/api/rooms/${code}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((room) => {
-        if (room) handleEventDispatch({ type: "state", room });
-      })
-      .catch(() => {});
-
     return connectStream({ code });
-  }, [code]);
+  }, [code, handleEvent]);
 }

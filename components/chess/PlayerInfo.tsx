@@ -26,9 +26,7 @@ export function PlayerInfo({ color }: { color: Color }) {
             {name}
             {color === "white" ? "（白）" : "（黑）"}
           </div>
-          {player && !player.connected && (
-            <div className="text-xs text-red-400">已离线</div>
-          )}
+          {player && !player.connected && <div className="text-xs text-red-400">已离线</div>}
         </div>
       </div>
       <Timer color={color} />

@@ -34,7 +34,8 @@ export const RESULT_REASON_TEXT: Record<GameResultReason, string> = {
 };
 
 export function resultText(r: GameResult): string {
-  if (r.winner) return `${r.winner === "white" ? "白方" : "黑方"}胜 · ${RESULT_REASON_TEXT[r.reason]}`;
+  if (r.winner)
+    return `${r.winner === "white" ? "白方" : "黑方"}胜 · ${RESULT_REASON_TEXT[r.reason]}`;
   return `和棋 · ${RESULT_REASON_TEXT[r.reason]}`;
 }
 

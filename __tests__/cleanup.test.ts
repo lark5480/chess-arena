@@ -13,8 +13,7 @@ type AnyRoom = {
 };
 
 function roomMap(): Map<string, AnyRoom> {
-  return (globalThis as unknown as { __chessArenaRooms: Map<string, AnyRoom> })
-    .__chessArenaRooms;
+  return (globalThis as unknown as { __chessArenaRooms: Map<string, AnyRoom> }).__chessArenaRooms;
 }
 
 test("清扫：无活动超 3 小时的等待房间被删除", () => {
