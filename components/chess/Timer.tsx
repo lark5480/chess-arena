@@ -35,7 +35,7 @@ export function Timer({ color }: { color: Color }) {
         const elapsed = Date.now() - clockUpdatedAt;
         return Math.max(0, serverMs - elapsed);
       });
-    }, 200);
+    }, 500); // 显示粒度为秒，500ms 轮询足够平滑
 
     return () => clearInterval(interval);
   }, [status, gameOver, turn, color, timeLimit, clockUpdatedAt, serverMs]);

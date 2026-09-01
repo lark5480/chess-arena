@@ -97,7 +97,16 @@ export function generatePgn(
   chess: Chess,
   meta: { white: string; black: string; result?: string }
 ): string {
-  chess.header("Event", "Chess Arena", "White", meta.white, "Black", meta.black, "Result", meta.result ?? "*");
+  chess.header(
+    "Event",
+    "Chess Arena",
+    "White",
+    meta.white,
+    "Black",
+    meta.black,
+    "Result",
+    meta.result ?? "*"
+  );
   return chess.pgn();
 }
 

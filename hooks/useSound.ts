@@ -5,11 +5,26 @@ import { useGameStore } from "@/stores/game-store";
 
 type Tone = "move" | "check" | "end" | "capture";
 
-function playTone(kind: Tone) {
-  if (typeof window === "undefined") return;
+// 复用单个 AudioContext：浏览器对同页实例数有限制（Chrome ~6 个），
+// 每次播放新建会在连续事件（将杀+结束音）时创建失败
+let sharedCtx: AudioContext | null = null;
+
+function getAudioContext(): AudioContext | null {
+  if (typeof window === "undefined") return null;
   const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
-  if (!AC) return;
-  const ctx: AudioContext = new AC();
+  if (!AC) return null;
+  let ctx = sharedCtx;
+  if (!ctx) {
+    ctx = new AC() as AudioContext;
+    sharedCtx = ctx;
+  }
+  if (ctx.state === "suspended") ctx.resume().catch(() => {});
+  return ctx;
+}
+
+function playTone(kind: Tone) {
+  const ctx = getAudioContext();
+  if (!ctx) return;
   const now = ctx.currentTime;
 
   const presets: Record<Tone, { freq: number; dur: number; type: OscillatorType; gain: number }> = {
@@ -28,7 +43,6 @@ function playTone(kind: Tone) {
   osc.connect(gain).connect(ctx.destination);
   osc.start(now);
   osc.stop(now + p.dur);
-  setTimeout(() => ctx.close().catch(() => {}), p.dur * 1000 + 100);
 }
 
 export function useSound() {

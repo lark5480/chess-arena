@@ -35,6 +35,8 @@ export interface MoveRecord {
   promotion?: string;
   playedBy: Color;
   playedAt: number;
+  /** 该步走子前双方剩余时间（悔棋时据此回退时钟） */
+  clocksBefore?: Clocks;
 }
 
 export interface ChatMessage {
@@ -91,11 +93,26 @@ export interface RoomState {
 }
 
 // ===== SSE 事件（服务端 → 客户端） =====
+// 注意：所有事件与快照中的 Player.id 一律为空串（身份凭证不下发，见 store.snapshot）
 export type RoomEvent =
   | { type: "state"; room: RoomState }
-  | { type: "player_joined"; player: Player; room: RoomState }
-  | { type: "game_start"; fen: string; turn: Color; timeLimit: TimeLimit; white: Player; black: Player }
-  | { type: "move"; move: MoveRecord; fen: string; turn: Color; gameOver: boolean; result?: GameResult; clocks?: Clocks }
+  | {
+      type: "game_start";
+      fen: string;
+      turn: Color;
+      timeLimit: TimeLimit;
+      white: Player;
+      black: Player;
+    }
+  | {
+      type: "move";
+      move: MoveRecord;
+      fen: string;
+      turn: Color;
+      gameOver: boolean;
+      result?: GameResult;
+      clocks?: Clocks;
+    }
   | { type: "chat"; message: ChatMessage }
   | { type: "resign"; by: Color; result: GameResult }
   | { type: "draw_offer"; by: Color }
@@ -105,7 +122,15 @@ export type RoomEvent =
   | { type: "takeback_accepted"; fen: string; moves: MoveRecord[]; turn: Color; clocks?: Clocks }
   | { type: "takeback_declined"; by: Color }
   | { type: "timeout"; by: Color; result: GameResult }
-  | { type: "rematch"; gameNo: number; fen: string; turn: Color; timeLimit: TimeLimit; white: Player; black: Player };
+  | {
+      type: "rematch";
+      gameNo: number;
+      fen: string;
+      turn: Color;
+      timeLimit: TimeLimit;
+      white: Player;
+      black: Player;
+    };
 
 // ===== API 请求/响应 =====
 export interface CreateRoomRequest {

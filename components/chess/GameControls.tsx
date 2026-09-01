@@ -48,13 +48,14 @@ export function GameControls() {
     const pgn = generatePgn(chess, {
       white: white?.name ?? "白方",
       black: black?.name ?? "黑方",
-      result: gameOver && useGameStore.getState().result
-        ? useGameStore.getState().result!.winner
-          ? useGameStore.getState().result!.winner === "white"
-            ? "1-0"
-            : "0-1"
-          : "1/2-1/2"
-        : "*",
+      result:
+        gameOver && useGameStore.getState().result
+          ? useGameStore.getState().result!.winner
+            ? useGameStore.getState().result!.winner === "white"
+              ? "1-0"
+              : "0-1"
+            : "1/2-1/2"
+          : "*",
     });
     downloadPgn(pgn, code);
   };

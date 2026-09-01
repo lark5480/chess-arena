@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { takebackRequestAction, takebackRespondAction } from "@/lib/store";
+import { rateLimitGuard } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(
-  req: Request,
-  { params }: { params: { code: string } }
-) {
+export async function POST(req: Request, { params }: { params: { code: string } }) {
+  const limited = rateLimitGuard(req, "takeback", 30);
+  if (limited) return limited;
   const body = (await req.json().catch(() => ({}))) as {
     playerId: string;
     action?: "accept" | "decline";

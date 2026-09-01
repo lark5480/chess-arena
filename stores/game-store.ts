@@ -1,10 +1,5 @@
 import { create } from "zustand";
-import {
-  applyMove,
-  createGame,
-  generatePgn,
-  invertColor,
-} from "@/lib/chess-engine";
+import { applyMove, createGame, generatePgn, invertColor } from "@/lib/chess-engine";
 import { chooseAIMove } from "@/lib/ai-engine";
 import type {
   ChatMessage,
@@ -46,6 +41,8 @@ interface GameStore {
   // 大厅/身份
   code: string;
   playerId: string;
+  /** 加入时的原始执子颜色（快照无 playerId，靠 gameNo 奇偶推导当前颜色） */
+  initialColor: Color | null;
   myColor: Color | null;
   myName: string;
   mode: "friend" | "ai";
@@ -113,6 +110,7 @@ function playerOf(state: GameStore, color: Color): Player | null {
 export const useGameStore = create<GameStore>((set, get) => ({
   code: "",
   playerId: "",
+  initialColor: null,
   myColor: null,
   myName: "",
   mode: "friend",
@@ -149,6 +147,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({
       code: info.code,
       playerId: info.playerId,
+      initialColor: info.myColor,
       myColor: info.myColor,
       myName: info.myName,
       mode: info.mode,
@@ -171,7 +170,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           timeLimit: e.timeLimit,
           white: e.white,
           black: e.black,
-          myColor: syncMyColor([e.white, e.black], get().myColor, get().playerId),
+          myColor: colorAtGame(get().initialColor, 1),
           moves: [],
           chat: [],
           gameOver: false,
@@ -180,10 +179,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
           takebackBy: null,
           gameNo: 1,
           opponentConnected: true,
+          pendingPromotion: null,
+          error: null,
         });
-        break;
-      case "player_joined":
-        applyRoom(set, e.room);
         break;
       case "move": {
         const st = get();
@@ -206,13 +204,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
         set((s) => ({ chat: [...s.chat, e.message] }));
         break;
       case "resign":
-        set({ gameOver: true, result: e.result, status: "finished", drawOfferBy: null, takebackBy: null });
+        set({
+          gameOver: true,
+          result: e.result,
+          status: "finished",
+          drawOfferBy: null,
+          takebackBy: null,
+          pendingPromotion: null,
+        });
         break;
       case "draw_offer":
         set({ drawOfferBy: e.by });
         break;
       case "draw_accepted":
-        set({ gameOver: true, result: e.result, status: "finished", drawOfferBy: null });
+        set({
+          gameOver: true,
+          result: e.result,
+          status: "finished",
+          drawOfferBy: null,
+          pendingPromotion: null,
+        });
         break;
       case "draw_declined":
         set({ drawOfferBy: null });
@@ -228,14 +239,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
           takebackBy: null,
           selectedSquare: null,
           legalTargets: [],
+          pendingPromotion: null,
           ...(e.clocks ? { clocks: { ...e.clocks } } : {}),
+          clockUpdatedAt: Date.now(),
         });
         break;
       case "takeback_declined":
         set({ takebackBy: null });
         break;
       case "timeout":
-        set({ gameOver: true, result: e.result, status: "finished" });
+        set({
+          gameOver: true,
+          result: e.result,
+          status: "finished",
+          drawOfferBy: null,
+          takebackBy: null,
+          pendingPromotion: null,
+        });
         break;
       case "rematch":
         set({
@@ -248,7 +268,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           timeLimit: e.timeLimit,
           white: e.white,
           black: e.black,
-          myColor: syncMyColor([e.white, e.black], get().myColor, get().playerId),
+          myColor: colorAtGame(get().initialColor, e.gameNo),
           moves: [],
           chat: [],
           gameOver: false,
@@ -256,11 +276,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
           drawOfferBy: null,
           takebackBy: null,
           opponentConnected: true,
+          pendingPromotion: null,
+          error: null,
         });
         break;
     }
-    // 对局结束 → 写入本地历史
-    if (get().result && get().gameOver) recordHistory();
+    // 对局结束 → 写入本地历史（去重后每个对局只写一次）
+    const ended = get().result && get().gameOver;
+    if (ended && lastRecordedGameId !== currentGameId()) {
+      lastRecordedGameId = currentGameId();
+      recordHistory();
+    }
     // 人机模式：若轮到 AI，自动走子
     triggerAIMoveIfNeeded();
   },
@@ -278,16 +304,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
   move: async (from, to, promotion) => {
     const st = get();
     if (!st.code || !st.playerId) return;
-    if (st.gameOver || st.turn !== st.myColor) return;
+    if (st.gameOver || st.status !== "playing" || st.turn !== st.myColor) return;
 
-    // 乐观更新（本地即时反馈）
+    // 乐观更新（本地即时反馈），失败时回滚
+    const prevFen = st.fen;
+    const prevTurn = st.turn;
     const tmp = createGame(st.fen);
     const r = applyMove(tmp, { from, to, promotion });
     if (!r.ok) {
       set({ error: r.error ?? "非法走子" });
       return;
     }
-    set({ fen: r.fen!, turn: invertColor(st.turn), selectedSquare: null, legalTargets: [], pendingPromotion: null });
+    set({
+      fen: r.fen!,
+      turn: invertColor(st.turn),
+      selectedSquare: null,
+      legalTargets: [],
+      pendingPromotion: null,
+    });
 
     try {
       const res = await fetch(`/api/rooms/${st.code}/move`, {
@@ -301,7 +335,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         await resync(set, get);
       }
     } catch {
-      set({ error: "网络错误" });
+      // 网络异常：回滚乐观更新，棋盘回到服务端认知的局面
+      set({ error: "网络错误", fen: prevFen, turn: prevTurn });
     }
   },
 
@@ -383,19 +418,20 @@ function buildPgnFromState(): string {
     }
   }
   const res = st.result;
-  const resultStr = res
-    ? res.winner
-      ? res.winner === "white"
-        ? "1-0"
-        : "0-1"
-      : "1/2-1/2"
-    : "*";
+  const resultStr = res ? (res.winner ? (res.winner === "white" ? "1-0" : "0-1") : "1/2-1/2") : "*";
   return generatePgn(chess, {
     white: st.white?.name ?? "白方",
     black: st.black?.name ?? "黑方",
     result: resultStr,
   });
 }
+
+/** 当前对局的去重 id（code + gameNo），用于本地历史只记一次 */
+function currentGameId(): string {
+  const st = useGameStore.getState();
+  return `${st.code}-${st.gameNo}`;
+}
+let lastRecordedGameId = "";
 
 function recordHistory() {
   if (typeof window === "undefined") return;
@@ -423,13 +459,10 @@ function recordHistory() {
   }
 }
 
-function applyRoom(
-  set: (partial: Partial<GameStore>) => void,
-  room: import("@/types").RoomState
-) {
+function applyRoom(set: (partial: Partial<GameStore>) => void, room: import("@/types").RoomState) {
   const st = useGameStore.getState();
-  const me = room.players.find((p) => p.id === st.playerId);
-  const myColor = me ? me.color : st.myColor;
+  // 快照不含 playerId（凭证不下发）：颜色按 gameNo 奇偶从加入时的原始颜色推导
+  const myColor = colorAtGame(st.initialColor, room.gameNo);
   // 对手按颜色推导，不假设固定执黑；尚未加入时视为在线
   const opponent = myColor ? room.players.find((p) => p.color !== myColor) : undefined;
   set({
@@ -438,7 +471,7 @@ function applyRoom(
     gameNo: room.gameNo,
     white: room.players.find((p) => p.color === "white") ?? null,
     black: room.players.find((p) => p.color === "black") ?? null,
-    myColor: me ? me.color : st.myColor,
+    myColor,
     fen: room.currentFen,
     turn: room.turn,
     clocks: room.clocks ?? null,
@@ -453,11 +486,7 @@ function applyRoom(
   });
 }
 
-async function postAction(
-  set: (partial: Partial<GameStore>) => void,
-  url: string,
-  body: unknown
-) {
+async function postAction(set: (partial: Partial<GameStore>) => void, url: string, body: unknown) {
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -473,10 +502,7 @@ async function postAction(
   }
 }
 
-async function resync(
-  set: (partial: Partial<GameStore>) => void,
-  get: () => GameStore
-) {
+async function resync(set: (partial: Partial<GameStore>) => void, get: () => GameStore) {
   const st = get();
   if (!st.code) return;
   try {
@@ -490,18 +516,20 @@ async function resync(
   }
 }
 
-/** 在新局面中按当前身份(playerId)重新计算我方颜色（交换先后手后颜色会翻转） */
-function syncMyColor(
-  players: Player[] | undefined,
-  current: Color | null,
-  playerId: string
-): Color | null {
-  if (!players) return current;
-  const me = players.find((p) => p.id === playerId);
-  return me ? me.color : current;
+/**
+ * 事件与快照不携带 playerId（凭证不下发），颜色推导改为纯本地逻辑：
+ * 以加入时的原始颜色为基准，每次 rematch（gameNo+1）服务端必翻转双方颜色，
+ * 故当前颜色 = 原始颜色按 (gameNo-1) 奇偶翻转。断线错过 rematch 事件后
+ * 靠快照的 gameNo 也能恢复正确颜色。
+ */
+function colorAtGame(initial: Color | null, gameNo: number): Color | null {
+  if (!initial) return null;
+  return (gameNo - 1) % 2 === 0 ? initial : invertColor(initial);
 }
 
 /** 供 hook 在 AI 回合触发走子 */
+let aiMoveInFlight = false;
+
 export function triggerAIMoveIfNeeded(): void {
   const st = useGameStore.getState();
   if (st.mode !== "ai" || !st.aiPlayerId) return;
@@ -510,25 +538,64 @@ export function triggerAIMoveIfNeeded(): void {
   // AI 执子方不固定：新一局交换先后手后 AI 可能执白
   const aiPlayer = st.white?.isAI ? st.white : st.black?.isAI ? st.black : null;
   if (!aiPlayer || st.turn !== aiPlayer.color) return;
+  // 在途去重：AI 思考期间其他事件（聊天/状态广播）不应重复派发搜索
+  if (aiMoveInFlight) return;
 
   const fen = st.fen;
-  const aiPlayerId = aiPlayer.id;
+  // AI 走子凭证取自加入 AI 时的私有响应（sessionStorage 的 aiPlayerId），
+  // 不能从 st.white/st.black 取——快照中的玩家 id 已脱敏为空串（见 snapshot()）
+  const aiPlayerId = st.aiPlayerId;
   const code = st.code;
+  aiMoveInFlight = true;
   // 模拟思考延迟，体验更自然
-  setTimeout(async () => {
-    requestAIMove(fen, st.aiDifficulty ?? 2, async (move) => {
-      if (!move) return;
-      try {
-        await fetch(`/api/rooms/${code}/move`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ playerId: aiPlayerId, from: move.from, to: move.to, promotion: move.promotion }),
-        });
-      } catch {
-        /* ignore */
-      }
-    });
-  }, 500 + Math.random() * 600);
+  setTimeout(
+    async () => {
+      requestAIMove(
+        fen,
+        st.aiDifficulty ?? 2,
+        async (move) => {
+          aiMoveInFlight = false;
+          if (!move) return;
+          try {
+            await fetch(`/api/rooms/${code}/move`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                playerId: aiPlayerId,
+                from: move.from,
+                to: move.to,
+                promotion: move.promotion,
+              }),
+            });
+          } catch {
+            /* ignore：SSE 状态同步会驱动重试（轮次未变时下个事件再触发） */
+          }
+        },
+        // Worker 异常兜底：标记完成并回退主线程同步计算一次
+        () => {
+          aiMoveInFlight = false;
+          try {
+            const fallbackMove = chooseAIMove(fen, useGameStore.getState().aiDifficulty ?? 2);
+            if (fallbackMove) {
+              fetch(`/api/rooms/${code}/move`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  playerId: aiPlayerId,
+                  from: fallbackMove.from,
+                  to: fallbackMove.to,
+                  promotion: fallbackMove.promotion,
+                }),
+              }).catch(() => {});
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      );
+    },
+    500 + Math.random() * 600
+  );
 }
 
 // ===== Web Worker 中执行 AI 搜索，避免阻塞主线程 =====
@@ -552,11 +619,16 @@ type AIMoveResult = { id: number; move: import("@/lib/ai-engine").AIMove | null 
 function requestAIMove(
   fen: string,
   depth: number,
-  onDone: (move: import("@/lib/ai-engine").AIMove | null) => void
+  onDone: (move: import("@/lib/ai-engine").AIMove | null) => void,
+  onError?: () => void
 ): void {
   const worker = getAIWorker();
   if (!worker) {
-    onDone(chooseAIMove(fen, depth));
+    try {
+      onDone(chooseAIMove(fen, depth));
+    } catch {
+      onError?.();
+    }
     return;
   }
   const id = ++aiWorkerSeq;
@@ -564,5 +636,15 @@ function requestAIMove(
     if (ev.data?.id !== id) return; // 丢弃过期请求的结果
     onDone(ev.data.move ?? null);
   };
-  worker.postMessage({ fen, depth, id });
+  worker.onerror = () => {
+    if (id !== aiWorkerSeq) return;
+    aiWorker = null; // 下次重建 Worker
+    onError?.();
+  };
+  try {
+    worker.postMessage({ fen, depth, id });
+  } catch {
+    aiWorker = null;
+    onError?.();
+  }
 }
