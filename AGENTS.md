@@ -8,7 +8,7 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 
 ## 架构关键点
 
-- **服务端状态**：`lib/store.ts` 用 `globalThis.__chessArenaRooms` Map 存储房间状态。用 globalThis 是为了绕过 Next.js dev HMR 导致的模块重置（标准单例模式）。
+- **服务端状态**：`lib/store/`（拆分为 `room`/`snapshot`/`presence`/`lifecycle`/`clock`/`lobby`/`move`/`actions` 等模块，统一从 `lib/store/index.ts` 导出）用 `globalThis.__chessArenaRooms` Map 存储房间状态。用 globalThis 是为了绕过 Next.js dev HMR 导致的模块重置（标准单例模式）。
 - **身份凭证隔离（重要）**：playerId 是所有写操作的唯一凭证，**只通过创建/加入的私有 HTTP 响应下发给本人**。`snapshot()` 与所有广播事件中 `players[].id` 一律为空串，防止观战者/对手拿到凭证冒充操作。客户端凭 sessionStorage 的 lobby 身份识别自己；`myColor` 由加入时的原始颜色 + gameNo 奇偶推导（每次 rematch 服务端必翻转颜色），断线错过 rematch 事件也能恢复。
 - **实时通信**：`lib/realtime.ts` 用 `globalThis.__chessArenaSubs` Map 管理每个房间的 SSE 订阅者集合。`broadcast()` 向所有订阅者推送事件。SSE 连接有上限：每房间 12 条、全局 300 条。
 - **SSE 流**：`app/api/rooms/[code]/stream/route.ts` 是 SSE 长连接入口。连接时推送全量快照（`{type:"state"}`），之后 25s 心跳保活，断连时清理订阅者。客户端重连为指数退避（3s→30s 上限，带抖动）。
@@ -55,12 +55,12 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 - **语言**：TypeScript 严格模式，`tsc --noEmit` 必须通过
 - **样式**：Tailwind CSS，配色 token 见 `tailwind.config.ts`（bg/surface/border/accent/muted）
 - **暗色主题**：默认深色 UI，背景 `#0f1115`，文字 `#e8eaed`，强调色 `#FF5C1A`
-- **状态管理**：服务端用 `lib/store.ts` 的内存 Map，客户端用 Zustand
+- **状态管理**：服务端用 `lib/store/` 的内存 Map，客户端用 Zustand
 - **测试**：`npm test`，当前 68 项全通过。glob 固定写单星 `__tests__/*.test.ts`——双星 `**` 依赖 Node 自身对 glob 的实现，在 Linux CI 上可能匹配不到文件，造成"跑 0 个测试却显示通过"的假绿灯
 - **代码风格**：ESLint（`next/core-web-vitals`）+ Prettier。`next.config.mjs` 已移除 `eslint.ignoreDuringBuilds`，因此 `npm run build` 会真正跑 lint；提交前用 `npm run lint:fix` 与 `npm run format` 收敛。Markdown 目前不纳入 Prettier（避免格式改动混入内容 diff）
 - **CI**：`.github/workflows/ci.yml` 在 push/PR 到 `main`、`dev` 时执行 `npm ci` → `lint` → `format:check` → `typecheck` → `test` → `build`，同一分支新提交自动取消旧任务
 - **ESLint**：构建时忽略（`next.config.mjs` 中 `eslint.ignoreDuringBuilds: true`），但请保持代码整洁
-- **输入校验**：服务端入口统一做类型/长度校验（`sanitizeName`/`sanitizeAvatar`/`normalizeTimeLimit`），timeLimit 只接受白名单 {0,300,600,900}（0=无限制，勿用 `||` 兜底，会吃掉 0）
+- **输入校验**：`lib/store/validate.ts` 用 Zod schema（`playerNameSchema`/`avatarSchema`/`timeLimitSchema`）统一做类型/长度清洗，timeLimit 只接受白名单 {0,300,600,900}（0=无限制，勿用 `||` 兜底，会吃掉 0）
 - **凭证纪律**：新增任何对外下发 room 数据的路径（快照/事件/响应），players[].id 必须脱敏（`publicPlayer()` 或 `snapshot()`）
 
 ## 已知限制
@@ -74,7 +74,7 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 
 ### 新增 API 路由
 1. 在 `app/api/rooms/[code]/` 下新建 `route.ts`
-2. 调用 `lib/store.ts` 中的 action 函数
+2. 调用 `lib/store` 中导出的 action 函数
 3. 用 `broadcast()` 推送事件
 4. 在 `types/index.ts` 补充事件类型
 

@@ -542,7 +542,9 @@ export function triggerAIMoveIfNeeded(): void {
   if (aiMoveInFlight) return;
 
   const fen = st.fen;
-  const aiPlayerId = aiPlayer.id;
+  // AI 走子凭证取自加入 AI 时的私有响应（sessionStorage 的 aiPlayerId），
+  // 不能从 st.white/st.black 取——快照中的玩家 id 已脱敏为空串（见 snapshot()）
+  const aiPlayerId = st.aiPlayerId;
   const code = st.code;
   aiMoveInFlight = true;
   // 模拟思考延迟，体验更自然

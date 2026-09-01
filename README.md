@@ -115,7 +115,18 @@ chess-arena/
 │   ├── ai-engine.ts                # AI 走子引擎
 │   ├── ai.worker.ts                # AI 搜索 Web Worker
 │   ├── pgn.ts                      # PGN 导出与走法编解码
-│   ├── store.ts                    # 服务端房间状态（内存 Map）
+│   ├── store/                       # 服务端房间状态（内存 Map，按职责拆分）
+│   │   ├── index.ts                 #   统一出口（对外 API 不变）
+│   │   ├── room.ts                  #   存储单例与查找
+│   │   ├── snapshot.ts              #   脱敏快照与系统消息
+│   │   ├── presence.ts              #   在线状态（连接计数+宽限期）
+│   │   ├── lifecycle.ts             #   TTL 清扫
+│   │   ├── clock.ts                 #   服务端权威计时
+│   │   ├── lobby.ts                 #   创建/加入
+│   │   ├── move.ts / actions.ts     #   走棋/认输/求和/悔棋/超时/再来一局
+│   │   ├── chat.ts                  #   聊天
+│   │   ├── outcome.ts               #   终局统一落地
+│   │   └── validate.ts              #   Zod 入参清洗
 │   ├── realtime.ts                 # SSE 订阅管理
 │   ├── rate-limit.ts               # 进程内滑动窗口限流
 │   ├── events.ts                   # SSE 事件序列化
