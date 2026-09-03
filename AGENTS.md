@@ -56,12 +56,11 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 - **样式**：Tailwind CSS，配色 token 见 `tailwind.config.ts`（bg/surface/border/accent/muted）
 - **暗色主题**：默认深色 UI，背景 `#0f1115`，文字 `#e8eaed`，强调色 `#FF5C1A`
 - **状态管理**：服务端用 `lib/store/` 的内存 Map，客户端用 Zustand
-- **测试**：`npm test`，当前 68 项全通过。glob 固定写单星 `__tests__/*.test.ts`——双星 `**` 依赖 Node 自身对 glob 的实现，在 Linux CI 上可能匹配不到文件，造成"跑 0 个测试却显示通过"的假绿灯
+- **测试**：`npm test`，当前 69 项全通过。glob 固定写单星 `__tests__/*.test.ts`——双星 `**` 依赖 Node 自身对 glob 的实现，在 Linux CI 上可能匹配不到文件，造成"跑 0 个测试却显示通过"的假绿灯
 - **代码风格**：ESLint（`next/core-web-vitals`）+ Prettier。`next.config.mjs` 已移除 `eslint.ignoreDuringBuilds`，因此 `npm run build` 会真正跑 lint；提交前用 `npm run lint:fix` 与 `npm run format` 收敛。Markdown 目前不纳入 Prettier（避免格式改动混入内容 diff）
 - **CI**：`.github/workflows/ci.yml` 在 push/PR 到 `main`、`dev` 时执行 `npm ci` → `lint` → `format:check` → `typecheck` → `test` → `build`，同一分支新提交自动取消旧任务
-- **ESLint**：构建时忽略（`next.config.mjs` 中 `eslint.ignoreDuringBuilds: true`），但请保持代码整洁
 - **输入校验**：`lib/store/validate.ts` 用 Zod schema（`playerNameSchema`/`avatarSchema`/`timeLimitSchema`）统一做类型/长度清洗，timeLimit 只接受白名单 {0,300,600,900}（0=无限制，勿用 `||` 兜底，会吃掉 0）
-- **凭证纪律**：新增任何对外下发 room 数据的路径（快照/事件/响应），players[].id 必须脱敏（`publicPlayer()` 或 `snapshot()`）
+- **凭证纪律**：新增任何对外下发 room 数据的路径（快照/事件/响应），players[].id 必须脱敏（`publicPlayer()` 或 `snapshot()`）。这条约束的**另一半同样重要**：凡是**发起写请求**的路径（含 AI 自触发的 `triggerAIMoveIfNeeded()`），凭证必须取自创建/加入时的私有响应（sessionStorage 的 `playerId`/`aiPlayerId`），**绝不能取快照玩家对象的 `id`**——那已是空串，会表现为"AI 不会走棋"（move 接口 400 参数缺失）。曾有此回归，已修并补测试
 
 ## 已知限制
 
@@ -69,6 +68,8 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 - **SSE 超时**：Vercel Hobby 版函数超时 10s，SSE 长连接可能被切断。已实现自动重连（指数退避）+ 全量快照恢复。
 - **无认证**：无用户系统，房间码即凭证。playerId 已不在快照中下发，但房间码本身可分享/枚举（6 位 32 字符集），join/ai 路由已限流缓解。好友对战场景信任对方，不做防作弊。
 - **限流为进程内实现**：单实例内存计数，重启清零，且 IP 头在无可信反代时可伪造。
+- **react-chessboard 锁 v4（4.7.3）**：v5 最低要求 React 19、配置改为单一 `options` 对象（大量 props 重命名），且移除了 `arePremovesAllowed`/`autoPromoteToQueen`/`onPromotionCheck`（升变与预走需外部自行实现）。本项 React 18.3.1，`^4.7.0` 不会跨大版本——**不要"顺手升级"**，那等于连带升级 React 并重写 `ChessBoard.tsx` 全部 props。升变弹窗本项已自研（`PromotionDialog.tsx`），届时影响可控，但仍属独立改造任务
+- **chessground 不可引入**：lichess 的 chessground 性能更优（10KB gzip、零依赖），但为 **GPL-3.0**，与本项 MIT 许可证冲突，存在传染性风险
 
 ## 常见开发任务
 
@@ -82,7 +83,7 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 1. `components/chess/ChessBoard.tsx` 是棋盘主组件
 2. 通过 `useGameStore` 读写状态
 3. 将军检测：`createGame(fen).inCheck()` + `chess.turn()` 找王格
-4. 合法走法：`legalTargetSquares(fen, square)`
+4. 合法走法：`legalTargetSquares(fen, square)`。内部走 chess.js **单格生成** `moves({ verbose: true, square })`——**不要改回"全量生成再 filter"**，实测中局全量约 1950 µs/op、单格约 120 µs/op（15–18× 差距）。等价性有回归测试覆盖（含易位/应将/将死/空格）
 
 ### 修改 AI
 - `lib/ai-engine.ts`：minimax + alpha-beta 剪枝 + 静态搜索 + 迭代加深。难度可选 depth 1/2/3（简单/中等/困难），由 `LobbyInfo.aiDifficulty` 传入 `chooseAIMove(fen, depth, timeBudgetMs)`
@@ -125,3 +126,15 @@ npm run build
 - `verify-fix.test.ts`：端到端集成冒烟（真实断言版）
 - `ai-engine.test.ts`：AI 引擎（PST 表结构与方向、厘兵量纲、开局走法、白吃后、一步杀、升变、静态搜索防白送子）
 - `pgn.test.ts`：PGN 导出与回放编解码（UCI 往返、升变、非法走法截断、结果标签映射）
+
+## 文档地图
+
+| 路径 | 性质 | 说明 |
+|------|------|------|
+| `README.md` | 活文档 | 功能清单、快速开始、项目结构 |
+| `AGENTS.md` | 活文档 | 本文件：架构约定与开发指南 |
+| `docs/PRD.md` | 活文档 | 产品需求文档 |
+| `docs/DEPLOYMENT.md` | 活文档 | 部署指南 |
+| `docs/decisions/*.md` | **归档快照，不回改** | 带日期的时点决策记录：需求评审、开发计划、竞品生态简报 |
+
+⚠️ **读 `docs/decisions/` 前必读**：那里记录的是**某次决策当时的结论**，其中部分判断已被后续实现推翻——例如需求评审（2026-08-19）判为 No-Go 且围绕 Supabase 展开安全方案，而实际实现改用 SSE + 内存存储；开发计划里的里程碑与目录结构也与当前代码有偏差。**不要把归档快照当成现状**：实现现状以代码与本文为准，只有在需要回答"当时为什么这么定"时才查阅它们。
