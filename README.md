@@ -14,6 +14,7 @@
 - **实时同步**：基于 SSE（Server-Sent Events），无需 WebSocket；断线指数退避重连 + 全量快照恢复
 - **完整规则**：将军/将死/逼和/王车易位/吃过路兵/升变/50步/三次重复/子力不足
 - **将军提示**：被将军时王格红色脉冲闪烁
+- **观战**：`/room/[code]/spectate` 只读订阅同一 SSE 流，无凭证不可操作
 - **对局功能**：走棋记录（代数记谱）、聊天、悔棋（好友模式禁用）、求和、认输
 - **操作反馈**：非法走子/操作失败/断线重连等状态全局提示（StatusNotice）
 - **棋谱回看**：点击走棋记录回溯任意局面，支持 ←→/Home/End 键盘导航，回看时高亮跟随所看着法
@@ -69,6 +70,7 @@ chess-arena/
 ├── app/
 │   ├── page.tsx                    # 首页（创建/加入房间）
 │   ├── room/[code]/page.tsx        # 对局房间
+│   ├── room/[code]/spectate/page.tsx # 观战（只读）
 │   ├── replay/page.tsx             # 对局回放（走法编码在 URL hash）
 │   ├── history/page.tsx            # 对局历史
 │   ├── api/rooms/
@@ -137,10 +139,14 @@ chess-arena/
 │   └── index.ts                    # TypeScript 类型
 ├── supabase/
 │   └── schema.sql                  # 可选持久化方案
-├── __tests__/                      # 单元测试（68 项：含审查修复回归测试、AI 引擎与 PGN 测试）
+├── __tests__/                      # 单元测试（69 项：含审查修复回归测试、AI 引擎与 PGN 测试）
 └── docs/
-    ├── 需求PRD.md                   # 产品需求文档
-    └── DEPLOYMENT.md               # 部署指南
+    ├── PRD.md                      # 产品需求文档（活文档：随项目演进更新）
+    ├── DEPLOYMENT.md               # 部署指南（活文档）
+    └── decisions/                  # 时点决策记录（归档快照，带日期，原则上不回改）
+        ├── 2026-08-19-requirement-review.md    # 需求评审（No-Go，6 项阻塞问题）
+        ├── 2026-08-19-dev-plan.md              # 开发计划（P0/P1/P2 任务拆分）
+        └── 2026-09-03-competitor-landscape.md  # 竞品生态简报（9 竞品 + 6 库核验）
 ```
 
 ## 玩法
@@ -187,7 +193,7 @@ npm run dev:lan
 npm run lint         # ESLint
 npm run format:check # Prettier 格式检查（npm run format 可自动修复）
 npm run typecheck    # 类型检查
-npm test             # 单元测试（68 项）
+npm test             # 单元测试（69 项）
 npm run build        # 生产构建
 ```
 

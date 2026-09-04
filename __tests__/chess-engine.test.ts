@@ -7,6 +7,7 @@ import {
   generatePgn,
   isPromotionMove,
   legalTargetSquares,
+  START_FEN,
 } from "../lib/chess-engine";
 
 test("开局走 e4 得到正确 SAN 与 FEN", () => {
@@ -80,6 +81,33 @@ test("合法走法高亮（e2 可走 e3/e4）", () => {
   const targets = legalTargetSquares(g.fen(), "e2");
   assert.ok(targets.includes("e3"));
   assert.ok(targets.includes("e4"));
+});
+
+// legalTargetSquares 走的是 chess.js 单格生成（moves({ square })），
+// 这里断言它与"全量生成后过滤"严格等价，覆盖易位、应将、将死、空格四类语义。
+test("legalTargetSquares 单格生成与全量过滤结果等价", () => {
+  const MIDDLE_GAME = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  const IN_CHECK = "4k3/8/8/8/8/8/4r3/4K3 w - - 0 1"; // 黑车 e2 将军白王
+  const CHECKMATE = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3"; // 傻瓜杀
+
+  const cases: Array<[string, string[]]> = [
+    [START_FEN, ["e2", "g1", "a1", "d8", "e5"]], // 兵 / 马 / 被堵的车 / 被堵的后 / 空格
+    [MIDDLE_GAME, ["c4", "f3", "e1", "d2", "h1"]], // 象 / 马 / 王(含易位) / 兵 / 车
+    [IN_CHECK, ["e1", "a1"]], // 应将：王格有走法，空格无
+    [CHECKMATE, ["e1", "d2", "g1"]], // 将死：任何格都无合法走法
+  ];
+
+  for (const [fen, squares] of cases) {
+    const all = createGame(fen).moves({ verbose: true }) as Array<{ from: string; to: string }>;
+    for (const sq of squares) {
+      const expected = all
+        .filter((m) => m.from === sq)
+        .map((m) => m.to)
+        .sort();
+      const actual = [...legalTargetSquares(fen, sq)].sort();
+      assert.deepEqual(actual, expected, `局面 ${fen} 的 ${sq} 格`);
+    }
+  }
 });
 
 test("generatePgn 输出标准 PGN 头", () => {
