@@ -3,7 +3,7 @@
 ## 架构概览
 
 ```
-浏览器 ──HTTP fetch──▶ Next.js API Routes (Vercel Serverless)
+浏览器 ──HTTP fetch──▶ Next.js API Routes (Vercel / EdgeOne Pages / 自托管单进程)
         └──SSE 长连接──▶ /api/rooms/[code]/stream (实时推送)
 
 服务端状态：内存存储（globalThis Map），无外部数据库依赖
@@ -12,7 +12,7 @@
 AI 对战：minimax + alpha-beta 剪枝（depth 1/2/3 可选，浏览器 Web Worker 中计算）
 ```
 
-**关键点**：项目当前使用**纯内存存储**，不依赖 Supabase / 数据库。部署到 Vercel 即可运行，无需配置外部服务。
+**关键点**：项目当前使用**纯内存存储**，不依赖 Supabase / 数据库。部署到 Vercel / EdgeOne Pages / 自托管均可运行，无需配置外部服务。
 
 ## 前置条件
 
@@ -20,7 +20,7 @@ AI 对战：minimax + alpha-beta 剪枝（depth 1/2/3 可选，浏览器 Web Wor
 |------|------|
 | Node.js | ≥ 18.17（本地开发） |
 | npm | ≥ 9 |
-| Vercel 账号 | 免费版即可 |
+| Vercel 账号 | 免费版即可（或腾讯云 EdgeOne 账号，国内部署可选） |
 | GitHub 仓库 | 代码推送后自动部署 |
 
 ## 部署步骤
@@ -71,7 +71,7 @@ Vercel Serverless Functions 有执行时间限制：
 - 客户端 `useRoomGame` hook 接管重连（指数退避 3s→30s 上限、带随机抖动；重连后推送全量快照恢复状态）
 - SSE 连接数上限：每房间 12 条、全局 300 条（防连接洪泛；达上限先回收僵尸订阅再拒绝）；所有写 API 路由均有按 IP 限流
 
-但仍可能遇到 Vercel 平台层面的连接限制。**如果好友对战场景 SSE 频繁断开**，有两个升级路径：
+但仍可能遇到 Vercel 平台层面的连接限制。**如果好友对战场景 SSE 频繁断开**，可选以下路径：
 
 ### 方案 A：升级 Vercel Pro（推荐，改动最小）
 
@@ -121,6 +121,8 @@ EdgeOne Pages 部署 Next.js 项目无需额外改动，但 **Node Functions 默
 
 ### Docker 方式（推荐）
 
+> ⚠️ **根目录已有可直接使用的 `Dockerfile`（推荐直接用）**。注意它比下面的片段多一行 `RUN mkdir -p public`：**本仓库没有 `public/` 目录，少了这行 `COPY --from=builder /app/public` 会构建失败**。
+
 ```dockerfile
 # Dockerfile
 FROM node:18-alpine AS builder
@@ -128,21 +130,25 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+RUN mkdir -p public        # 本仓库无 public/，补空目录，否则下一阶段 COPY 失败
 RUN npm run build
 
 FROM node:18-alpine AS runner
 WORKDIR /app
+ENV NODE_ENV=production
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./
+COPY --from=builder /app/next.config.mjs ./
 EXPOSE 3000
 CMD ["npm", "start"]
 ```
 
 ```bash
 docker build -t chess-arena .
-docker run -d -p 3000:3000 --name chess-arena chess-arena
+# 只绑本机 127.0.0.1，由 Nginx 反代对外；--restart always 保证重启自拉起
+docker run -d --name chess-arena --restart always -p 127.0.0.1:3000:3000 chess-arena
 ```
 
 ### PM2 方式
@@ -167,10 +173,13 @@ location /api/rooms/ {
     proxy_buffering off;
     proxy_cache off;
     proxy_read_timeout 86400s;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;                  # 限流按真实 IP 计数，必需
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
 ```
 
-**关键**：`proxy_buffering off` 和 `proxy_read_timeout` 必须设置，否则 SSE 会被 Nginx 缓冲导致实时性丧失。
+**关键**：`proxy_buffering off` 和 `proxy_read_timeout` 必须设置，否则 SSE 会被 Nginx 缓冲导致实时性丧失；`X-Real-IP` / `X-Forwarded-For` 也必须透传——应用限流按客户端 IP 计数，缺了它们所有请求会共用一个桶。完整可用配置见 [`deploy/nginx.conf`](../deploy/nginx.conf)。
 
 ## 可选：启用 Supabase 持久化
 
@@ -185,7 +194,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://<你的项目>.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<你的 anon key>
 ```
 
-4. 修改 `lib/store.ts` 将内存操作替换为 Supabase 查询（需自行实现）
+4. 修改 `lib/store/` 各模块将内存操作替换为 Supabase 查询（需自行实现）
 
 > 当前版本未集成 Supabase，以上为后续扩展路径。
 

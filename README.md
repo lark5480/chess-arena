@@ -11,7 +11,7 @@
 
 - **好友对战**：创建房间 → 分享链接 → 对方加入 → 实时对弈
 - **人机对战**：内置 AI（minimax + alpha-beta 剪枝 + 位置评估表 + 静态搜索 + 迭代加深），可执白或执黑；向 AI 悔棋自动同意、求和自动拒绝
-- **实时同步**：基于 SSE（Server-Sent Events），无需 WebSocket；断线指数退避重连 + 全量快照恢复
+- **实时同步**：基于 SSE（Server-Sent Events），无需 WebSocket；断线指数退避重连 + 全量快照恢复；服务端主动轮换连接（规避 Serverless 函数超时）并回收僵尸订阅
 - **完整规则**：将军/将死/逼和/王车易位/吃过路兵/升变/50步/三次重复/子力不足
 - **将军提示**：被将军时王格红色脉冲闪烁
 - **观战**：`/room/[code]/spectate` 只读订阅同一 SSE 流，无凭证不可操作
@@ -41,7 +41,7 @@
 | 状态管理 | Zustand |
 | 实时通信 | SSE（Server-Sent Events） |
 | AI | minimax + alpha-beta + 位置评估表 + 静态搜索（depth 1/2/3，带 1200ms 时间预算） |
-| 部署 | Vercel / 自托管 |
+| 部署 | Vercel / EdgeOne Pages / 自托管（Docker + Nginx） |
 
 ## 快速开始
 
@@ -139,7 +139,7 @@ chess-arena/
 │   └── index.ts                    # TypeScript 类型
 ├── supabase/
 │   └── schema.sql                  # 可选持久化方案
-├── __tests__/                      # 单元测试（69 项：含审查修复回归测试、AI 引擎与 PGN 测试）
+├── __tests__/                      # 单元测试（75 项：含审查修复回归、SSE 容量清理、AI 引擎与 PGN 测试）
 └── docs/
     ├── PRD.md                      # 产品需求文档（活文档：随项目演进更新）
     ├── DEPLOYMENT.md               # 部署指南（活文档）
@@ -185,6 +185,11 @@ npm run dev:lan
 2. 在 [vercel.com](https://vercel.com) 导入仓库
 3. 无需配置环境变量，直接 Deploy
 
+快速部署到腾讯云 EdgeOne Pages（国内访问推荐）：
+1. 推送代码到 GitHub
+2. EdgeOne Pages 控制台导入仓库
+3. 保持根目录 `edgeone.json` 不删（已把函数最大执行时长调到 2 分钟，删除会导致 SSE 连接被平台每 30 秒掐断一次）
+
 ## 参与贡献
 
 提交 PR 前请确保本地通过 CI 的五道工序：
@@ -193,7 +198,7 @@ npm run dev:lan
 npm run lint         # ESLint
 npm run format:check # Prettier 格式检查（npm run format 可自动修复）
 npm run typecheck    # 类型检查
-npm test             # 单元测试（69 项）
+npm test             # 单元测试（75 项）
 npm run build        # 生产构建
 ```
 
