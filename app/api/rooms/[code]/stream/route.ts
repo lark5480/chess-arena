@@ -6,7 +6,6 @@ import {
   totalSubscriberCount,
 } from "@/lib/realtime";
 import { eventToSse, SSE_HEADERS } from "@/lib/events";
-import { rateLimitGuard } from "@/lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +18,8 @@ export async function GET(req: Request, { params }: { params: { code: string } }
   const room = getSnapshot(code);
   if (!room) return new Response("房间不存在", { status: 404 });
 
-  const limited = rateLimitGuard(req, "stream", 30);
-  if (limited) return limited;
+  // 注意：SSE 是长连接 + 客户端自动重连，按"请求频次"限流会误伤（边缘平台上若取不到真实 IP，
+  // 所有玩家还会共用一个桶）。连接安全交给下面的并发上限兜底，这里不做频次限流。
   if (subscriberCount(code) >= MAX_SUBSCRIBERS_PER_ROOM)
     return new Response("该房间连接数已达上限", { status: 429 });
   if (totalSubscriberCount() >= MAX_TOTAL_SUBSCRIBERS)
