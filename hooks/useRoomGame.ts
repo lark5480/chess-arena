@@ -34,10 +34,11 @@ function handleEventDispatch(e: unknown) {
 
 /**
  * 建立 SSE 连接并处理断线：
- * - 可恢复错误交给浏览器自动重连，同时提示用户；
- * - 指数退避重试（3s 起、上限 30s，带随机抖动），避免故障期所有客户端同步重连风暴；
- * - 致命关闭（如房间被清理返回 404）时确认一次房间状态，
- *   仍存在则延迟重建连接，否则停止重连并提示。
+ * - 断线后主动 close 并统一走自研指数退避（3s 起、上限 30s，带随机抖动）：
+ *   EventSource 原生自动重连固定约 3s 且无退避，故障期会造成请求风暴（曾表现为刷屏 429）；
+ * - 服务端在平台函数超时前会主动轮换连接（先发 rotate 事件再关闭），
+ *   此时静默快速重连、不提示用户；
+ * - 连续失败多次后确认一次房间状态（404 才停止重连并提示）。
  */
 function connectStream(opts: {
   code: string;
@@ -49,10 +50,12 @@ function connectStream(opts: {
   let disposed = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let retryCount = 0;
+  // 服务端主动轮换标记：收到 rotate 事件后关闭属于预期行为，静默重连即可
+  let serverRotated = false;
 
-  const scheduleRetry = () => {
+  const scheduleRetry = (instant = false) => {
     if (disposed || retryTimer) return;
-    const backoff = Math.min(3000 * 2 ** retryCount, 30_000);
+    const backoff = instant ? 0 : Math.min(3000 * 2 ** retryCount, 30_000);
     const delay = backoff + Math.random() * 1000; // 抖动打散各客户端的重连节奏
     retryCount += 1;
     retryTimer = setTimeout(() => {
@@ -85,16 +88,29 @@ function connectStream(opts: {
         /* ignore malformed */
       }
     });
+    // 服务端连接轮换信号（随后会主动关闭）：立即静默重连，不打扰用户
+    es.addEventListener("rotate", () => {
+      serverRotated = true;
+    });
     es.onopen = () => {
       retryCount = 0;
+      serverRotated = false;
       useGameStore.getState().setToast(null);
     };
     es.onerror = () => {
-      if (!es || es.readyState === EventSource.CLOSED) {
-        confirmRoomGone();
-      } else {
-        useGameStore.getState().setToast("连接中断，正在重连…");
+      if (disposed) return;
+      // 接管重连：关闭浏览器原生自动重连，统一走指数退避，避免故障期请求风暴
+      es?.close();
+      if (serverRotated) {
+        // 平台函数超时前的正常轮换：静默快速重连
+        serverRotated = false;
+        scheduleRetry(true);
+        return;
       }
+      useGameStore.getState().setToast("连接中断，正在重连…");
+      // 连续多次失败后确认房间是否已被清理（404 才停止重连）
+      if (retryCount >= 3) confirmRoomGone();
+      else scheduleRetry();
     };
   };
 

@@ -1,0 +1,10 @@
+# 构建上下文瘦身：node_modules 与 .next 在镜像内重新生成，没必要传
+node_modules
+.next
+.git
+.github
+.workbuddy
+*.log
+.env
+.env.local
+.env*.local
