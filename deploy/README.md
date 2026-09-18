@@ -33,5 +33,5 @@ curl -N http://你的域名/api/rooms/<房间码>/stream
 ## 注意
 
 - **必须单实例**：房间状态存在内存里，多实例 / 负载均衡会导致"房间不存在"
-- ⚠️ `docs/DEPLOYMENT.md` 里的 Dockerfile 片段**缺少 `RUN mkdir -p public`**（本仓库没有 `public/` 目录）——照抄会构建失败，**以根目录 `Dockerfile` 为准**
+- `docs/DEPLOYMENT.md` 里的 Dockerfile 片段已与根目录 `Dockerfile` 同步（含 `RUN mkdir -p public`）；两边若再出现偏差，**以根目录 `Dockerfile` 为准**
 - ⚠️ **未实测**：本目录物料由笔记库整理而来，首次部署后请把实际报错 / 与文档不一致处回填笔记（手册会据此更新）
