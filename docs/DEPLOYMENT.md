@@ -121,6 +121,8 @@ EdgeOne Pages 部署 Next.js 项目无需额外改动，但 **Node Functions 默
 
 ### Docker 方式（推荐）
 
+> ⚠️ **根目录已有可直接使用的 `Dockerfile`（推荐直接用）**。注意它比下面的片段多一行 `RUN mkdir -p public`：**本仓库没有 `public/` 目录，少了这行 `COPY --from=builder /app/public` 会构建失败**。
+
 ```dockerfile
 # Dockerfile
 FROM node:18-alpine AS builder
@@ -128,14 +130,17 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
+RUN mkdir -p public        # 本仓库无 public/，补空目录，否则下一阶段 COPY 失败
 RUN npm run build
 
 FROM node:18-alpine AS runner
 WORKDIR /app
+ENV NODE_ENV=production
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./
+COPY --from=builder /app/next.config.mjs ./
 EXPOSE 3000
 CMD ["npm", "start"]
 ```
