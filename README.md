@@ -141,7 +141,7 @@ chess-arena/
 │   └── schema.sql                  # 可选持久化方案
 ├── __tests__/                      # 单元测试（75 项：含审查修复回归、SSE 容量清理、AI 引擎与 PGN 测试）
 └── docs/
-    ├── PRD.md                      # 产品需求文档（活文档：随项目演进更新）
+    ├── PRD.md                      # 初期产品需求文档（历史版本：Supabase 方案，未按此实现）
     ├── DEPLOYMENT.md               # 部署指南（活文档）
     └── decisions/                  # 时点决策记录（归档快照，带日期，原则上不回改）
         ├── 2026-08-19-requirement-review.md    # 需求评审（No-Go，6 项阻塞问题）

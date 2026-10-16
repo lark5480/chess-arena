@@ -20,6 +20,7 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 - **人机模式自动应答**：人类向 AI 求和 → AI 自动拒绝；人类请求悔棋 → AI 自动同意（服务端 `drawOfferAction`/`takebackRequestAction` 内处理）。好友模式不支持悔棋（客户端禁用按钮）。
 - **在线状态**：`setConnected` 按连接计数（同一玩家多标签页不误判离线），离线有 10s 宽限期。
 - **棋谱回看**：客户端 `game-store.ts` 的 `viewIndex` 控制回看步数；`ChessBoard.tsx` 在回看模式用历史 FEN 渲染并禁交互（最后一手高亮也跟随所看着法），`MoveHistory.tsx` 提供点击/键盘导航。
+- **分享回放与导出**：`lib/pgn.ts` 负责 PGN 导出与走法编解码（UCI 往返）。分享回放把走法序列编码进 URL hash（`app/replay`，`buildReplay`/`pgnFromMoves`），**服务端零存储**；对局历史 `app/history` 存于浏览器 localStorage（键 `chess-arena-history`）；观战页 `app/room/[code]/spectate` 只读订阅同一 SSE 流，无凭证不可操作。
 
 ## API 路由清单
 
@@ -134,8 +135,9 @@ npm run build
 |------|------|------|
 | `README.md` | 活文档 | 功能清单、快速开始、项目结构 |
 | `AGENTS.md` | 活文档 | 本文件：架构约定与开发指南 |
-| `docs/PRD.md` | 活文档 | 产品需求文档 |
+| `docs/PRD.md` | 历史需求文档（不回改） | 初期 PRD：围绕 Supabase/WebSocket 的规划，未按此实现；现状以本文为准 |
 | `docs/DEPLOYMENT.md` | 活文档 | 部署指南 |
+| `deploy/README.md` | 活文档 | 自托管部署物料说明（Dockerfile/Nginx）；完整手册在外部笔记库 |
 | `docs/decisions/*.md` | **归档快照，不回改** | 带日期的时点决策记录：需求评审、开发计划、竞品生态简报 |
 
 ⚠️ **读 `docs/decisions/` 前必读**：那里记录的是**某次决策当时的结论**，其中部分判断已被后续实现推翻——例如需求评审（2026-08-19）判为 No-Go 且围绕 Supabase 展开安全方案，而实际实现改用 SSE + 内存存储；开发计划里的里程碑与目录结构也与当前代码有偏差。**不要把归档快照当成现状**：实现现状以代码与本文为准，只有在需要回答"当时为什么这么定"时才查阅它们。
