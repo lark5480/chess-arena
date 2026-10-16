@@ -75,7 +75,7 @@ Vercel Serverless Functions 有执行时间限制：
 
 ### 方案 A：升级 Vercel Pro（推荐，改动最小）
 
-Pro 版函数超时 60 秒，SSE 心跳 + 自动重连可覆盖绝大多数场景。`vercel.json` 中可指定：
+Pro 版函数超时 60 秒，SSE 心跳 + 自动重连可覆盖绝大多数场景。仓库 `vercel.json` 已内置该配置（`maxDuration: 60`），升级 Pro 后即生效、无需额外改动：
 
 ```json
 {
