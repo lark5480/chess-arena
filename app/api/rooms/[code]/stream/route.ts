@@ -9,20 +9,22 @@ const MAX_SUBSCRIBERS_PER_ROOM = 12;
 const MAX_TOTAL_SUBSCRIBERS = 300;
 
 /**
- * 超过此时长的订阅必为平台掐断后残留下来的僵尸。
- * 取"函数最大执行时长 + 余量"：EdgeOne Node Functions 上限 120s（edgeone.json 配置），
- * 正常连接会在 STREAM_MAX_AGE_MS 时被服务端主动关闭，不存在活到 130s 的真实连接。
- */
-const STALE_SUBSCRIBER_MS = 130_000;
-
-/**
  * 单条 SSE 连接的服务端存活上限（主动轮换）。
  * 平台（EdgeOne/Vercel）对函数有最大执行时长，到点会强制掐断连接，
  * 而此时流的 cancel() 回调不保证触发，会留下僵尸订阅堵死房间连接配额（表现为 429 卡死）。
  * 因此在平台超时前主动优雅关闭：先发 rotate 事件提示客户端静默重连，再清理并关闭。
- * 与 edgeone.json 的 nodeFunctionsConfig.maxDuration = 120s 配套。
+ * 取 100s 的前提是平台时长更宽（EdgeOne 由 edgeone.json 配到上限 120s）；
+ * 平台时长小于它时（如 Vercel Pro 的 60s）连接会先被硬杀，轮换轮不到执行，只剩僵尸清理兜底。
  */
 const STREAM_MAX_AGE_MS = 100_000;
+
+/**
+ * 超过此时长的订阅必为平台掐断后残留下来的僵尸。
+ * 判据由 STREAM_MAX_AGE_MS 推导而非平台 maxDuration：真实连接最活到轮换点就会被服务端关掉，
+ * 所以「轮换点 + 余量」对任何平台都既不会误杀活连接，也不必随平台配置改动重新对数。
+ * 平台时长小于轮换点时，僵尸会一直占到这个阈值才被回收（回收偏晚，不影响正确性）。
+ */
+const STALE_SUBSCRIBER_MS = STREAM_MAX_AGE_MS + 30_000;
 
 /** 心跳间隔：保活中间代理，同时在写失败时兜底清理（cancel 未触发的场景） */
 const PING_INTERVAL_MS = 25_000;

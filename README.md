@@ -119,6 +119,7 @@ chess-arena/
 │   ├── pgn.ts                      # PGN 导出与走法编解码
 │   ├── store/                       # 服务端房间状态（内存 Map，按职责拆分）
 │   │   ├── index.ts                 #   统一出口（对外 API 不变）
+│   │   ├── constants.ts             #   策略数值唯一来源（时限白名单/TTL/连接与聊天上限/超时容差）
 │   │   ├── room.ts                  #   存储单例与查找
 │   │   ├── snapshot.ts              #   脱敏快照与系统消息
 │   │   ├── presence.ts              #   在线状态（连接计数+宽限期）
@@ -139,7 +140,7 @@ chess-arena/
 │   └── index.ts                    # TypeScript 类型
 ├── supabase/
 │   └── schema.sql                  # 可选持久化方案
-├── __tests__/                      # 单元测试（75 项：含审查修复回归、SSE 容量清理、AI 引擎与 PGN 测试）
+├── __tests__/                      # 单元测试（数量以 `npm test` 输出为准：含审查修复回归、SSE 容量清理、AI 引擎与 PGN 测试）
 └── docs/
     ├── PRD.md                      # 初期产品需求文档（历史版本：Supabase 方案，未按此实现）
     ├── DEPLOYMENT.md               # 部署指南（活文档）
@@ -198,7 +199,7 @@ npm run dev:lan
 npm run lint         # ESLint
 npm run format:check # Prettier 格式检查（npm run format 可自动修复）
 npm run typecheck    # 类型检查
-npm test             # 单元测试（75 项）
+npm test             # 单元测试
 npm run build        # 生产构建
 ```
 
