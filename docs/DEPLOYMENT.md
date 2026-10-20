@@ -20,7 +20,7 @@ AI 对战：minimax + alpha-beta 剪枝（depth 1/2/3 可选，浏览器 Web Wor
 |------|------|
 | Node.js | ≥ 18.17（本地开发） |
 | npm | ≥ 9 |
-| Vercel 账号 | 免费版即可（或腾讯云 EdgeOne 账号，国内部署可选） |
+| Vercel 账号 | 免费版可跑通构建与人机对战；好友对战的 SSE 长连接受函数超时影响，建议 Pro（60s）或改用 EdgeOne Pages / 自托管（见下文「关于 SSE 在 Vercel 上的注意事项」） |
 | GitHub 仓库 | 代码推送后自动部署 |
 
 ## 部署步骤
@@ -68,24 +68,15 @@ Vercel Serverless Functions 有执行时间限制：
 
 - 25 秒心跳 ping（保活）
 - 服务端 100 秒主动轮换连接（先发 `rotate` 事件再优雅关闭并清理订阅，客户端静默重连；避免平台硬杀连接留下的僵尸订阅堵死配额）
+  - **注意这条在 Vercel 上不会触发**：轮换阈值 100s 大于 Pro 的 60s / Hobby 的 10s，连接总是先被平台硬杀，`rotate` 事件发不出去。此时兜底靠客户端退避重连 + 服务端僵尸订阅回收（超龄阈值 130s 是按 EdgeOne 的 120s 上界取的，在 Vercel 上偏松——残留订阅最长占用房间配额约 130s）。想让轮换真正生效，需要 EdgeOne Pages（120s）或自托管。
 - 客户端 `useRoomGame` hook 接管重连（指数退避 3s→30s 上限、带随机抖动；重连后推送全量快照恢复状态）
 - SSE 连接数上限：每房间 12 条、全局 300 条（防连接洪泛；达上限先回收僵尸订阅再拒绝）；所有写 API 路由均有按 IP 限流
 
 但仍可能遇到 Vercel 平台层面的连接限制。**如果好友对战场景 SSE 频繁断开**，可选以下路径：
 
-### 方案 A：升级 Vercel Pro（推荐，改动最小）
+### 方案 A：升级 Vercel Pro（改动最小）
 
-Pro 版函数超时 60 秒，SSE 心跳 + 自动重连可覆盖绝大多数场景。仓库 `vercel.json` 已内置该配置（`maxDuration: 60`），升级 Pro 后即生效、无需额外改动：
-
-```json
-{
-  "functions": {
-    "app/api/rooms/[code]/stream/route.ts": {
-      "maxDuration": 60
-    }
-  }
-}
-```
+Pro 版函数超时 60 秒，心跳 + 自动重连可覆盖绝大多数场景。配置已在根目录 [`vercel.json`](../vercel.json) 里给 stream 路由申请了 `maxDuration: 60`，升级 Pro 后自动生效、无需额外改动（Hobby 版会忽略该申请，仍按 10s 掐断）。60 秒内连接会被掐一次，玩家侧表现为一次静默重连。
 
 ### 方案 B：自托管 Node.js 服务器（无超时限制）
 
@@ -121,35 +112,15 @@ EdgeOne Pages 部署 Next.js 项目无需额外改动，但 **Node Functions 默
 
 ### Docker 方式（推荐）
 
-> ⚠️ **根目录已有可直接使用的 `Dockerfile`（推荐直接用）**。注意它比下面的片段多一行 `RUN mkdir -p public`：**本仓库没有 `public/` 目录，少了这行 `COPY --from=builder /app/public` 会构建失败**。
-
-```dockerfile
-# Dockerfile
-FROM node:18-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN mkdir -p public        # 本仓库无 public/，补空目录，否则下一阶段 COPY 失败
-RUN npm run build
-
-FROM node:18-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/next.config.mjs ./
-EXPOSE 3000
-CMD ["npm", "start"]
-```
+镜像定义以根目录 [`Dockerfile`](../Dockerfile) 为唯一来源，本文不再复制片段（复制过一次就再没对上过）。构建/运行命令：
 
 ```bash
 docker build -t chess-arena .
 # 只绑本机 127.0.0.1，由 Nginx 反代对外；--restart always 保证重启自拉起
 docker run -d --name chess-arena --restart always -p 127.0.0.1:3000:3000 chess-arena
 ```
+
+动手前先读 `Dockerfile` 里 `RUN mkdir -p public` 那行的注释——它不是冗余步骤，原因就写在那儿。
 
 ### PM2 方式
 

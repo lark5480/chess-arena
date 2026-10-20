@@ -12,7 +12,7 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 - **身份凭证隔离（重要）**：playerId 是所有写操作的唯一凭证，**只通过创建/加入的私有 HTTP 响应下发给本人**。`snapshot()` 与所有广播事件中 `players[].id` 一律为空串，防止观战者/对手拿到凭证冒充操作。客户端凭 sessionStorage 的 lobby 身份识别自己；`myColor` 由加入时的原始颜色 + gameNo 奇偶推导（每次 rematch 服务端必翻转颜色），断线错过 rematch 事件也能恢复。
 - **实时通信**：`lib/realtime.ts` 用 `globalThis.__chessArenaSubs` 管理每个房间的 SSE 订阅者，结构为 `Map<Controller, {createdAt, playerId}>`（记录建立时间/玩家才能做僵尸清理）。`broadcast()` 向所有订阅者推送事件。SSE 连接有上限：每房间 12 条、全局 300 条。**连接配额达上限时先回收僵尸订阅（同 playerId 的旧连接、超龄连接）再拒绝**——平台（EdgeOne/Vercel）强制掐断连接时流的 `cancel()` 回调不保证触发，死订阅会把配额永久占满，曾表现为「重连永远 429 卡死」；新增 `acquireSubscriberSlot()` 统一做"先清理再判定"。
 - **SSE 流**：`app/api/rooms/[code]/stream/route.ts` 是 SSE 长连接入口。连接时推送全量快照（`{type:"state"}`），之后 25s 心跳保活。**连接在 100 秒时主动轮换**（`STREAM_MAX_AGE_MS`，配套 `edgeone.json` 的 `nodeFunctionsConfig.maxDuration=120`）：先发 `rotate` 事件（独立 SSE 事件名，不进 `RoomEvent`），再清理并 `close()`——把"平台超时硬杀（cancel 可能不触发）"变成"服务端优雅关闭（清理必然执行）"。清理由 `cancel` / 主动轮换 / 心跳写失败三条路径共用且幂等（`cleaned` 守卫）。客户端监听 `rotate` 后静默立即重连、不提示。
-- **客户端重连（`hooks/useRoomGame.ts` 的 `connectStream`）**：`es.onerror` 时先 `es.close()` 接管重连，**禁止依赖浏览器 EventSource 原生自动重连**（固定约 3s 且无退避，故障期会刷屏请求→429）。统一走指数退避（3s→30s 上限，带抖动）；收到 `rotate` 后静默快速重连；连续失败 ≥3 次才 fetch 房间确认（404 才停止重连）。
+- **客户端重连（`hooks/useRoomGame.ts` 的 `connectStream`）**：`es.onerror` 时先 `es.close()` 接管重连，**禁止依赖浏览器 EventSource 原生自动重连**——它没有退避（服务端 `retry: 5000` 只能把固定间隔从默认 ~3s 调成 5s，改不了"无退避"这一点），故障期会刷屏请求→429。统一走指数退避（3s→30s 上限，带抖动）；收到 `rotate` 后静默快速重连；连续失败 ≥3 次才 fetch 房间确认（404 才停止重连）。
 - **AI 走子触发**：客户端 `triggerAIMoveIfNeeded()` 动态识别 AI 颜色（`st.white?.isAI ? st.white : st.black?.isAI ? st.black : null`），不能假设 AI 恒执黑。通过 fetch 请求 `/api/rooms/[code]/move` 走子。AI 回合有在途去重（`aiMoveInFlight`），Worker 失败自动回退主线程。
 - **走棋权威**：服务端用 chess.js 重放校验，返回权威 FEN。客户端也有 chess.js 做预校验（高亮合法走法），但最终以服务端为准。
 - **服务端权威计时**：`RoomState` 含 `clocks`（每方剩余毫秒）与 `clockUpdatedAt`。走子时服务端扣减耗时；走子请求晚于钟面耗尽超过 200ms 容差时该步无效并直接判负。无服务端定时器扫描，超时由客户端时钟归零时上报 `/timeout`（任一方可报任一方），`timeoutAction()` 按权威时钟复核：轮到被判方扣减 elapsed 后比对容差；停表方仅当钟面恰好为 0（走子时耗尽）才可判负。悔棋回退时钟到被悔着法的 `clocksBefore`。
@@ -26,20 +26,20 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 
 | 路由 | 方法 | 说明 |
 |------|------|------|
-| `/api/rooms` | POST | 创建房间（10 次/分/IP） |
-| `/api/rooms/[code]` | GET | 获取房间信息（120 次/分/IP） |
-| `/api/rooms/[code]/join` | POST | 加入房间（好友对战，10 次/分/IP 防枚举抢座） |
-| `/api/rooms/[code]/ai` | POST | 加入 AI 机器人（10 次/分/IP） |
-| `/api/rooms/[code]/move` | POST | 走棋（60 次/分/IP） |
-| `/api/rooms/[code]/chat` | POST | 发送聊天（30 次/分/IP，单条 500 字封顶，房间 200 条封顶） |
-| `/api/rooms/[code]/resign` | POST | 认输（20 次/分/IP） |
-| `/api/rooms/[code]/draw` | POST | 求和（offer/accept/decline，30 次/分/IP） |
-| `/api/rooms/[code]/takeback` | POST | 悔棋（request/accept/decline，30 次/分/IP） |
-| `/api/rooms/[code]/rematch` | POST | 再来一局（交换先后手，20 次/分/IP） |
-| `/api/rooms/[code]/timeout` | POST | 超时判负（30 次/分/IP） |
-| `/api/rooms/[code]/stream` | GET | SSE 实时事件流（不做频次限流，并发上限：房间 12 条、全局 300 条，达上限先回收僵尸再拒绝） |
+| `/api/rooms` | POST | 创建房间 |
+| `/api/rooms/[code]` | GET | 获取房间信息 |
+| `/api/rooms/[code]/join` | POST | 加入房间（好友对战；限流是为缓解房间码枚举抢座） |
+| `/api/rooms/[code]/ai` | POST | 加入 AI 机器人 |
+| `/api/rooms/[code]/move` | POST | 走棋 |
+| `/api/rooms/[code]/chat` | POST | 发送聊天（长度与条数上限见 `lib/store/constants.ts`） |
+| `/api/rooms/[code]/resign` | POST | 认输 |
+| `/api/rooms/[code]/draw` | POST | 求和（offer/accept/decline） |
+| `/api/rooms/[code]/takeback` | POST | 悔棋（request/accept/decline） |
+| `/api/rooms/[code]/rematch` | POST | 再来一局（交换先后手） |
+| `/api/rooms/[code]/timeout` | POST | 超时判负 |
+| `/api/rooms/[code]/stream` | GET | SSE 实时事件流（不做频次限流，并发上限见"实时通信"） |
 
-所有限流为进程内滑动窗口（`lib/rate-limit.ts` 的 `rateLimitGuard()`），IP 取自 X-Forwarded-For/X-Real-IP——仅在可信反代后面才可靠。
+**每路由的频次上限只写在各自 route 文件里**（`rateLimitGuard(req, scope, limit)` 的 `limit` 实参，窗口一律用默认 60s；`/api/rooms` 例外，它直接调底层的 `allowRequest()`，因此带自己的 429 文案）——本文不抄这些数字，调参时无需回来同步。IP 取自 X-Forwarded-For/X-Real-IP（`lib/rate-limit.ts`），仅在可信反代后面才可靠。
 
 ## 类型系统
 
@@ -57,7 +57,7 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 - **样式**：Tailwind CSS，配色 token 见 `tailwind.config.ts`（bg/surface/border/accent/muted）
 - **暗色主题**：默认深色 UI，背景 `#0f1115`，文字 `#e8eaed`，强调色 `#FF5C1A`
 - **状态管理**：服务端用 `lib/store/` 的内存 Map，客户端用 Zustand
-- **测试**：`npm test`，当前 75 项全通过。glob 固定写单星 `__tests__/*.test.ts`——双星 `**` 依赖 Node 自身对 glob 的实现，在 Linux CI 上可能匹配不到文件，造成"跑 0 个测试却显示通过"的假绿灯
+- **测试**：`npm test`（用例数会随开发变动，不在文档里抄写——要当前数字就跑命令看输出）。glob 固定写单星 `__tests__/*.test.ts`——双星 `**` 依赖 Node 自身对 glob 的实现，在 Linux CI 上可能匹配不到文件，造成"跑 0 个测试却显示通过"的假绿灯
 - **代码风格**：ESLint（`next/core-web-vitals`）+ Prettier。`next.config.mjs` 已移除 `eslint.ignoreDuringBuilds`，因此 `npm run build` 会真正跑 lint；提交前用 `npm run lint:fix` 与 `npm run format` 收敛。Markdown 目前不纳入 Prettier（避免格式改动混入内容 diff）
 - **CI**：`.github/workflows/ci.yml` 在 push/PR 到 `main`、`dev` 时执行 `npm ci` → `lint` → `format:check` → `typecheck` → `test` → `build`，同一分支新提交自动取消旧任务
 - **输入校验**：`lib/store/validate.ts` 用 Zod schema（`playerNameSchema`/`avatarSchema`/`timeLimitSchema`）统一做类型/长度清洗，timeLimit 只接受白名单 {0,300,600,900}（0=无限制，勿用 `||` 兜底，会吃掉 0）
@@ -66,7 +66,8 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
 ## 已知限制
 
 - **内存存储**：服务重启后房间数据丢失，跨 Serverless 实例不共享。Vercel 免费版多实例场景下好友对战可能遇到"房间不存在"。房间有 TTL 清理：结束后 30 分钟或无活动 3 小时自动删除；进程内房间数上限 500。
-- **SSE 超时**：Serverless 平台的函数最大执行时长会掐断 SSE——Vercel Hobby 约 10s、EdgeOne Pages Node Functions 默认 30s（`edgeone.json` 已调到上限 120s）。项目对策：25s 心跳保活 + 服务端 100s 主动轮换 + 客户端指数退避重连（3s→30s）+ 重连推全量快照恢复状态 + 僵尸订阅清理（见"实时通信"）。**部署到 EdgeOne Pages 必须保留根目录的 `edgeone.json`**，否则连接每 30s 被平台掐断一次。
+- **SSE 超时**：Serverless 平台的函数最大执行时长会掐断 SSE——Vercel Hobby 约 10s、Vercel Pro 60s（`vercel.json` 为 stream 路由申请 `maxDuration: 60`）、EdgeOne Pages Node Functions 默认 30s（`edgeone.json` 已调到上限 120s）。项目对策：25s 心跳保活 + 服务端 100s 主动轮换 + 客户端指数退避重连（3s→30s）+ 重连推全量快照恢复状态 + 僵尸订阅清理（见"实时通信"）。**部署到 EdgeOne Pages 必须保留根目录的 `edgeone.json`**，否则连接每 30s 被平台掐断一次。
+  - **100s 主动轮换只在平台时长 > 100s 的环境下真正生效**（EdgeOne 120s、自托管无限制）。Vercel Pro 的 60s 会先于轮换把连接硬杀，`rotate` 事件不会发出，只能落到"客户端退避重连 + 服务端僵尸清理"兜底；僵尸回收阈值 `STALE_SUBSCRIBER_MS` 由 `STREAM_MAX_AGE_MS + 30s` 推导（刻意不引用平台 `maxDuration`，这样换平台不用重新对数），平台时长更短时只是回收偏晚，不影响正确性。
 - **无认证**：无用户系统，房间码即凭证。playerId 已不在快照中下发，但房间码本身可分享/枚举（6 位 32 字符集），join/ai 路由已限流缓解。好友对战场景信任对方，不做防作弊。
 - **限流为进程内实现**：单实例内存计数，重启清零，且 IP 头在无可信反代时可伪造。
 - **react-chessboard 锁 v4（4.7.3）**：v5 最低要求 React 19、配置改为单一 `options` 对象（大量 props 重命名），且移除了 `arePremovesAllowed`/`autoPromoteToQueen`/`onPromotionCheck`（升变与预走需外部自行实现）。本项 React 18.3.1，`^4.7.0` 不会跨大版本——**不要"顺手升级"**，那等于连带升级 React 并重写 `ChessBoard.tsx` 全部 props。升变弹窗本项已自研（`PromotionDialog.tsx`），届时影响可控，但仍属独立改造任务
@@ -94,7 +95,7 @@ Next.js 14 国际象棋对战平台，SSE 实时通信 + 内存存储，支持�
   - **静态搜索（quiescence）**：depth 用尽时不直接评估，而是继续只展开**吃子**直到局面平静，以此消除地平线效应（否则 AI 会"白送子"）。**切勿把升变也计入 forcing moves**——升变可以延后，一旦计入就会让 stand-pat 的下界语义失效，表现为"先走闲棋再升变"的分数反而高于"立即升变"
   - **迭代加深**：从 depth 1 逐层加深；某层超时（默认 `DEFAULT_TIME_BUDGET_MS` = 1200ms）即丢弃该层的不完整结果、沿用上一层。这保证即使是最难的困难档，Worker 失效回退主线程同步计算时也不会卡住 UI
   - **性能特征**（实测，调参前先读这里）：开局/残局 depth 3 约 300ms 即可完整完成；复杂中局 depth 2 约 850ms、depth 3 约 4.2s。预算取 1200ms 的关键原因是中局 depth 1+2 累计约 990ms——**低于该值会让 depth 2 层在收尾前被反复截断丢弃、最终只剩 depth 1 的结果，迭代加深会退化成负优化**。因此困难档在开局与残局能看满 3 层、中局自动回落到 2 层，这是自适应的预期行为而非缺陷
-  - 若要把困难档的中局也推到 3 层，最有效的手段是**置换表（Zobrist 哈希）**，其次 null-move 剪枝；单纯调低 `QUIESCENCE_MAX_PLY` 收益极小（实测 8→5 仅快约 1%）
+  - 若要把困难档的中局也推到 3 层，最有效的手段是**置换表（Zobrist 哈希）**，其次 null-move 剪枝；单纯调低 `QUIESCENCE_MAX_PLY` 收益极小（该值现为 5，从 8 降到 5 实测仅快约 1%）
 - AI 走子由客户端触发：`stores/game-store.ts` 的 `triggerAIMoveIfNeeded()`
 - 搜索在 Web Worker 中执行（`lib/ai.worker.ts`），环境不支持时回退主线程同步计算（测试即走回退路径）
 - AI 走子请求发到 `/api/rooms/[code]/move`，与人类走子共用同一 API
